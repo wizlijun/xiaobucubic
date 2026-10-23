@@ -1,0 +1,7 @@
+{
+  "api_url": "",
+  "read_token": "",
+  "refresh_seconds": 60,
+  "rotate_seconds": 15,
+  "auto_rotate": true
+}

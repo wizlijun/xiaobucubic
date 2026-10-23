@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "generated_at": 1792659600,
+  "stale_after_seconds": 900,
+  "demo": true,
+  "subscriptions": [
+    {
+      "id": "claude", "name": "Claude", "plan": "Max",
+      "source": "official", "updated_at": 1792659540,
+      "windows": [
+        {"label": "5小时", "used_percent": 62, "reset_at": 1792666800},
+        {"label": "7天", "used_percent": 41, "reset_at": 1792832400}
+      ]
+    },
+    {
+      "id": "codex", "name": "Codex", "plan": "Pro",
+      "source": "official", "updated_at": 1792659540,
+      "windows": [
+        {"label": "5小时", "used_percent": 34, "reset_at": 1792670400},
+        {"label": "7天", "used_percent": 56, "reset_at": 1792918800}
+      ]
+    },
+    {
+      "id": "grok", "name": "Grok", "plan": "",
+      "source": "unknown", "updated_at": null, "windows": [],
+      "note": "等待接入订阅数据"
+    }
+  ],
+  "messages": [
+    {"title": "留一点空白", "text": "专注眼前的一件事。完成后，起身走一走。", "priority": "normal"},
+    {"title": "出门前看看天气", "text": "这是显示效果示例。真实提醒由你的服务 API 提供。", "priority": "high", "due_at": 1792661400}
+  ],
+  "weather": {
+    "city": "深圳", "condition": "多云", "temperature_c": 27.8, "feels_like_c": 29.2,
+    "low_c": 23, "high_c": 29, "humidity_percent": 68, "rain_percent": 20, "wind_kmh": 8,
+    "source": "示例天气", "updated_at": 1792659300
+  }
+}

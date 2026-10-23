@@ -1,0 +1,13 @@
+{"schema_version":1,"generated_at":1792664580,"generated_at_utc":"2026-10-22T10:23:00Z","stale_after_seconds":900,
+ "subscriptions":[
+  {"id":"claude","name":"Claude","source":"official","updated_at":1792664565,"updated_at_utc":"2026-10-22T10:22:45Z",
+   "windows":[{"label":"5小时","used_percent":40,"reset_at":1792669799,"reset_at_utc":"2026-10-22T11:49:59Z"},
+              {"label":"7天","used_percent":17,"reset_at":1792670399,"reset_at_utc":"2026-10-22T11:59:59Z"}],"plan":"Max"},
+  {"id":"codex","name":"Codex","source":"official","updated_at":1792664568,"updated_at_utc":"2026-10-22T10:22:48Z",
+   "windows":[{"label":"7天","used_percent":25,"reset_at":1793199840,"reset_at_utc":"2026-10-28T15:04:00Z"}],"plan":"Pro"}],
+ "messages":[
+  {"id":"sample","title":"示例","text":"示例消息","priority":"normal","updated_at":1792664580,"updated_at_utc":"2026-10-22T10:23:00Z",
+   "due_at":1792670000,"due_at_utc":"2026-10-22T11:53:20Z","expires_at":1792664640,"expires_at_utc":"2026-10-22T10:24:00Z","sender":"bot"}],
+ "weather":{"city":"深圳","condition":"晴间多云","temperature_c":28.5,"feels_like_c":29.5,"low_c":23.2,"high_c":32,
+  "humidity_percent":51,"rain_percent":0,"wind_kmh":10.5,"source":"Open-Meteo","updated_at":1792664100,
+  "updated_at_utc":"2026-10-22T10:15:00Z","condition_now":"晴","forecast_hours":12}}

@@ -1,0 +1,11 @@
+name = xiaobucubic
+name_zh_cn = 小布 Cubic
+name_en = xiaobucubic
+kind = app
+category = tool
+catalog_scope = community
+entry = main.lua
+icon = main.png
+description = AI remaining quota with weather, and a conditional message page
+description_zh_cn = 主页看额度与天气，有消息时轮播消息页
+version = 1.0.0

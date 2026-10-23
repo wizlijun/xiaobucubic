@@ -1,0 +1,39 @@
+{
+  "generator": "built-in image_gen",
+  "date": "2026-10-22",
+  "common": "Use case: stylized-concept.\nAsset type: production background bitmap for a tiny 320x240 landscape HoloCubic information display, 4:3 aspect ratio. Generate a single edge-to-edge image, preferably 1280x960, composed to remain recognizable after downsampling to 320x240.\nStyle: refined soft atmospheric digital painting, smooth gradients, soft depth, minimal detail, elegant dark ambient sky. This is a wallpaper asset ONLY, absolutely no text, numbers, logos, borders, UI, panels, frames, device mockup, or watermarks.\nComposition: left 65% and lower 65% are mostly quiet very dark blue-black negative space (#070c12 family) for white dashboard text and cards. Weather motif concentrated in the right quarter around x=84%, y=25%; keep the extreme top-right corner dark and quiet for a tiny connectivity indicator. Subtle distant low silhouette or haze is acceptable but no buildings, people, trees or busy scenery.\nLighting: low luminance, restrained soft glow, no harsh white patches. Beautiful yet subdued. Palette predominantly midnight navy, slate, muted cyan, weather-specific accent. Not cartoon icon style, not a centered icon, not a collage.",
+  "items": [
+    {
+      "key": "sunny",
+      "scene": "Clear sunny weather suggested by a small softly diffused muted amber sun in the upper-right quarter, gentle amber-blue atmospheric glow, clean sky, barely visible distant haze. Overall DARK dashboard-friendly treatment despite daytime sunshine."
+    },
+    {
+      "key": "partly_cloudy",
+      "scene": "Partly cloudy weather: a softly glowing pale amber sun partially occluded by one softly sculpted slate-blue cloud in the upper-right quarter, a couple of very faint wispy clouds; quiet deep navy atmosphere."
+    },
+    {
+      "key": "overcast",
+      "scene": "Overcast weather: soft broad layered blue-gray cloud banks concentrated across the upper right, no visible sun, diffuse desaturated slate light, calm heavy cloud ceiling fading smoothly into near-black blue."
+    },
+    {
+      "key": "rain",
+      "scene": "Rainy weather: a soft blue-gray rain cloud in the upper right and a few fine diagonal silver-blue rain streaks confined mainly to the right edge, subtle mist, deep navy background. Rain must read at very small size without becoming a dense texture."
+    },
+    {
+      "key": "thunderstorm",
+      "scene": "Thunderstorm: a charcoal indigo storm cloud in upper right, a single small subdued fork of pale violet lightning near the far-right side below it, faint rain haze. Dramatic but LOW contrast and dark, lightning not intensely white and not crossing the left text area."
+    },
+    {
+      "key": "snow",
+      "scene": "Snowy weather: a soft cold slate-blue cloud in upper right with a small number of gentle softly glowing snow particles drifting down the right side, fine ice-blue haze. Very sparse particles, calm winter mood, no large graphic snowflake icon."
+    },
+    {
+      "key": "fog",
+      "scene": "Foggy weather: several softly layered horizontal banks of bluish fog concentrated on the right and faint distant low ridgeline silhouettes, no sun, no sharp details; atmospheric, spacious and muted, distinct low-contrast mist bands visible at small size."
+    },
+    {
+      "key": "clear_night",
+      "scene": "Clear night: a small softly luminous crescent moon in the upper-right quarter, only a few tiny dim stars nearby, deep midnight navy sky fading to near-black, restrained cool cyan halo. Keep stars away from the left text region and extreme top-right status corner."
+    }
+  ]
+}

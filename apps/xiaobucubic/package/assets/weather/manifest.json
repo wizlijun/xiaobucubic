@@ -1,0 +1,15 @@
+{
+  "width": 320,
+  "height": 240,
+  "format": "png",
+  "backgrounds": [
+    {"id": "sunny", "name": "晴天", "file": "sunny.png"},
+    {"id": "partly_cloudy", "name": "多云", "file": "partly_cloudy.png"},
+    {"id": "overcast", "name": "阴天", "file": "overcast.png"},
+    {"id": "rain", "name": "雨天", "file": "rain.png"},
+    {"id": "thunderstorm", "name": "雷雨", "file": "thunderstorm.png"},
+    {"id": "snow", "name": "雪天", "file": "snow.png"},
+    {"id": "fog", "name": "雾天", "file": "fog.png"},
+    {"id": "clear_night", "name": "晴夜", "file": "clear_night.png"}
+  ]
+}
