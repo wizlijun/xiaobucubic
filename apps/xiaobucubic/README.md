@@ -27,6 +27,18 @@ python3 tools/deploy.py http://10.15.2.72 --launch
 
 工具只写入 `/sd/apps/xiaobucubic/`，逐文件校验，覆盖前备份到 `.runtime/backups/`。升级时保留设备已有配置；指定 `--config /path/to/config.json` 才覆盖配置。不要在应用正在运行时用读卡器更换文件。
 
+### 开机自动进入应用
+
+设备已保存 Wi-Fi 配置后，运行：
+
+```sh
+python3 tools/set_autostart.py http://设备IP
+```
+
+该工具备份并更新 `/sd/apps/settings.json` 和 `/sd/apps/launcher/main.lua`，保留其他设置，逐文件回读校验。下次开机时，Launcher 等待 Wi-Fi 获得有效 IP，然后自动进入 `xiaobucubic`；连接较慢时继续等待，可在应用列表手动打开 Wi-Fi 配网。每次开机只自动进入一次，按 Home 退出后不会再次跳入。
+
+配置使用 `autostart_enabled=true`、`autostart_app_id="xiaobucubic"` 和 `autostart_wait_for_wifi=true`。最后一项由工具对 Launcher 的小范围补丁提供；升级官方 Launcher 后需要重新运行此工具。遇到无法识别的 Launcher 源码时工具会停止，不写入设备。
+
 ## 接入自己的服务
 
 修改设备上的 `/sd/apps/xiaobucubic/config.json`：
