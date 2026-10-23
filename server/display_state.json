@@ -1,0 +1,87 @@
+{
+ "subscriptions": {
+  "claude": {
+   "id": "claude",
+   "name": "Claude",
+   "source": "official",
+   "updated_at": 1792739861,
+   "windows": [
+    {
+     "label": "5小时",
+     "used_percent": 61,
+     "reset_at": 1792745400
+    },
+    {
+     "label": "7天",
+     "used_percent": 7,
+     "reset_at": 1793275200
+    }
+   ],
+   "plan": "Max"
+  },
+  "codex": {
+   "id": "codex",
+   "name": "Codex",
+   "source": "official",
+   "updated_at": 1792739864,
+   "windows": [
+    {
+     "label": "7天",
+     "used_percent": 3,
+     "reset_at": 1793330152
+    }
+   ],
+   "plan": "Pro"
+  },
+  "grok": {
+   "id": "grok",
+   "name": "Grok",
+   "source": "official",
+   "updated_at": 1792739867,
+   "windows": [
+    {
+     "label": "7天",
+     "used_percent": 33,
+     "reset_at": 1793165281
+    }
+   ],
+   "plan": "SuperGrok"
+  }
+ },
+ "messages": [
+  {
+   "id": "xiaobu-secureframe-part3",
+   "title": "回马晓航昨天退回的 Secureframe policy 待办第三部分",
+   "text": "回马晓航昨天退回的 Secureframe policy 待办第三部分",
+   "priority": "normal",
+   "updated_at": 1792726820,
+   "expires_at": 1792771140,
+   "sender": "bot"
+  },
+  {
+   "id": "xiaobu-soc2-12-github",
+   "title": "与张思浩落地 SOC2-12 的 3 处 GitHub 配置",
+   "text": "与张思浩落地 ARCH-2、SRE-2、ARCH-3 三处 GitHub 配置，风险接受记录送 EXEC 批",
+   "priority": "normal",
+   "updated_at": 1792726825,
+   "expires_at": 1792771140,
+   "sender": "bot"
+  }
+ ],
+ "weather": {
+  "city": "深圳",
+  "condition": "晴",
+  "temperature_c": 31.3,
+  "feels_like_c": 31.2,
+  "low_c": 21.5,
+  "high_c": 31.4,
+  "humidity_percent": 40,
+  "rain_percent": 0,
+  "wind_kmh": 14.4,
+  "pressure_hpa": 1005.8,
+  "source": "Open-Meteo",
+  "updated_at": 1792739700,
+  "condition_now": "晴",
+  "forecast_hours": 12
+ }
+}

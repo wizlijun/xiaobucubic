@@ -1,0 +1,11 @@
+# 把本机显示服务 (127.0.0.1:8007) 映射到 frps 的 8007 端口。
+# 终端访问: http://120.48.136.92:8007/v1/display
+serverAddr = "120.48.136.92"
+serverPort = 7007
+
+[[proxies]]
+name = "web"
+type = "tcp"
+localIP = "127.0.0.1"
+localPort = 8007
+remotePort = 8007

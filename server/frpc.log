@@ -1,0 +1,6 @@
+[1;34m2026-10-23 16:17:39.414 [I] [sub/root.go:194] start frpc service for config file [frpc.toml] with aggregated configuration
+[0m[1;34m2026-10-23 16:17:39.414 [I] [client/service.go:335] try to connect to server...
+[0m[1;34m2026-10-23 16:17:39.659 [I] [client/service.go:355] [6c1b3681d2e72b83] login to server success, get run id [6c1b3681d2e72b83]
+[0m[1;34m2026-10-23 16:17:39.659 [I] [proxy/proxy_manager.go:183] [6c1b3681d2e72b83] proxy added: [web]
+[0m[1;34m2026-10-23 16:17:39.713 [I] [client/control.go:174] [6c1b3681d2e72b83] [web] start proxy success
+[0m
