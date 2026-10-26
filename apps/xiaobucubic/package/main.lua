@@ -11,7 +11,7 @@ local NOTE_COLORS={
   {paper=0xB9DFF2,header=0x83BBD7}, -- sky blue
 }
 local cfg={api_url="",read_token="",refresh_seconds=60,rotate_seconds=15,auto_rotate=true,utc_offset_minutes=480}
-local state={alive=true,busy=false,tick=0,page=1,quota_page=1,window=1,message=1,message_part=1,last_fetch=-10000,request_id=0,
+local state={alive=true,busy=false,tick=0,page=1,quota_page=1,window=1,message=1,last_fetch=-10000,request_id=0,
   last_received=nil,rotate_at=15,connection="等待配置",snapshot=nil,error=nil,failures=0}
 local fonts={}
 local ui={nodes={},props={}}
@@ -132,7 +132,6 @@ local function sync_messages()
   state.message=selected or math.min(state.message,math.max(1,#messages))
   local r=messages[state.message]
   local key=r and message_key(r,state.message)
-  if key~=state.message_key then state.message_part=1 end
   state.message_key=key
   state.active_count=#messages
   state.quota_page=math.min(state.quota_page,model.quota_pages(state.snapshot))
@@ -294,7 +293,7 @@ end
 local function draw_reminder(messages)
   local r=messages[state.message]
   if not r then return end
-  -- Alternate paper colors per note; all pages of a note keep the same color.
+  -- Each reminder occupies one sheet, with colors cycling through the palette.
   local palette=NOTE_COLORS[(state.message-1)%#NOTE_COLORS+1]
   local paper=palette.paper
   local ink,muted=0x30382D,0x626B50
@@ -302,9 +301,7 @@ local function draw_reminder(messages)
   box("message.header",root,0,0,320,29,header,0)
   label("message.count",root,14,6,225,20,"便签 · "..state.message.." / "..#messages,small,ink)
   local sheet=box("message.paper",root,0,29,320,211,paper,0)
-  local chunks=model.message_chunks(r.text)
-  state.message_part=math.min(state.message_part,#chunks)
-  local body=label("message.body",sheet,22,14,276,158,chunks[state.message_part],message_font,ink,
+  local body=label("message.body",sheet,22,14,276,158,model.message_preview(r.text),message_font,ink,
     LV_TEXT_ALIGN_LEFT,LV_LABEL_LONG_CLIP)
   style(body,"text_line_space",4)
   local due=""
@@ -315,8 +312,6 @@ local function draw_reminder(messages)
   label("message.meta",sheet,22,184,226,17,(r.sender=="bot" and "Bot · " or "")..
     (r.priority=="high" and "重要" or "备忘")..(due~="" and " · "..due or ""),small,muted,
     LV_TEXT_ALIGN_LEFT,LV_LABEL_LONG_CLIP)
-  label("message.part",sheet,252,184,46,17,
-    #chunks>1 and (state.message_part.."/"..#chunks) or "",small,muted,LV_TEXT_ALIGN_RIGHT)
 
 end
 local function render()
@@ -393,11 +388,8 @@ end
 local timer=tmr.create()
 local function advance_message()
   local messages=sync_messages()
-  if #messages==0 then state.message=1;state.message_part=1;return end
-  local current=messages[math.min(state.message,#messages)]
-  local chunks=model.message_chunks(current.text)
-  if state.message_part<#chunks then state.message_part=state.message_part+1
-  else state.message=state.message%#messages+1;state.message_part=1 end
+  if #messages==0 then state.message=1;return end
+  state.message=state.message%#messages+1
   state.message_key=message_key(messages[state.message],state.message)
 end
 local function switch_page(delta)

@@ -273,4 +273,22 @@ function M.message_chunks(value, max_width, max_lines, measure)
   if #parts==0 then parts[1]="" end
   return parts
 end
+function M.message_preview(value)
+  local chunks=M.message_chunks(value)
+  if #chunks==1 then return chunks[1] end
+  local prefix,last=chunks[1]:match("^(.*\n)([^\n]*)$")
+  prefix,last=prefix or "",last or chunks[1]
+  local chars,width={},0
+  for char in last:gmatch("[%z\1-\127\194-\244][\128-\191]*") do
+    chars[#chars+1]=char;width=width+M.message_char_width(char)
+  end
+  local removed=false
+  while width+M.message_char_width("…")>264 and #chars>0 do
+    width=width-M.message_char_width(table.remove(chars));removed=true
+  end
+  last=table.concat(chars)
+  -- If making room cut an English word, omit the rest of that word too.
+  if removed then last=last:gsub("[%w_]+$","") end
+  return prefix..last:gsub("%s+$","").."…"
+end
 return M

@@ -442,7 +442,16 @@ class DisplayTest(unittest.TestCase):
         pages=list(self.model.message_chunks(value).values())
         self.assertEqual("".join(pages).replace("\n",""),value)
 
-    def test_note_paper_alternates_and_pagination_keeps_color(self):
+    def test_message_preview_is_one_sheet_with_ellipsis_only_on_overflow(self):
+        for value in ("中"*180,"Review the deployment checklist before Friday. "*5,"第一行\n"*12):
+            preview=self.model.message_preview(value)
+            self.assertTrue(preview.endswith("…"))
+            self.assertLessEqual(len(preview.split("\n")),5)
+            self.assertTrue(all(sum(self.model.message_char_width(c) for c in line)<=264 for line in preview.split("\n")))
+        for value in ("短便签", "第一行\n第二行", "中"*60):
+            self.assertEqual(self.model.message_preview(value),self.model.message_chunks(value)[1])
+
+    def test_note_paper_alternates_and_long_note_advances_directly(self):
         self.fixture["messages"]=[{"id":"yellow","text":"中"*180},{"id":"green","text":"Review the deployment checklist"},
             {"id":"red","text":"第三条"},{"id":"blue","text":"第四条"},{"id":"repeat","text":"第五条"}]
         g=self.boot();g.requests[1](200,"valid");g.key.callback(g.key.RIGHT,g.key.SHORT)
@@ -450,9 +459,6 @@ class DisplayTest(unittest.TestCase):
             return [s.bg_color for s in g.styles.values() if s.bg_color in (0xFFF2A6,0xDDEEB4,0xF7B6B2,0xB9DFF2)]
         self.assertEqual(paper(),[0xFFF2A6])
         g.key.callback(g.key.UP,g.key.SHORT)
-        self.assertEqual(g.XIAOBUCUBIC.state.message_part,2)
-        self.assertEqual(paper(),[0xFFF2A6])
-        g.key.callback(g.key.UP,g.key.SHORT);g.key.callback(g.key.UP,g.key.SHORT)
         self.assertEqual(g.XIAOBUCUBIC.state.message,2)
         self.assertEqual(paper(),[0xDDEEB4])
         for color,header in ((0xF7B6B2,0xDE8580),(0xB9DFF2,0x83BBD7),(0xFFF2A6,0xE2CA65)):
