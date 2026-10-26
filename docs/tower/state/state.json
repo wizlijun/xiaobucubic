@@ -1,7 +1,7 @@
 {
   "version": 1,
   "project_id": "01a17846-e88a-718d-bf61-3faa88e8cb1d",
-  "seq": 203,
+  "seq": 266,
   "epoch": 1,
   "epoch_high_water": 1,
   "omitted_heartbeats": [
@@ -44,6 +44,26 @@
     {
       "first": 202,
       "last": 202
+    },
+    {
+      "first": 206,
+      "last": 206
+    },
+    {
+      "first": 210,
+      "last": 210
+    },
+    {
+      "first": 212,
+      "last": 212
+    },
+    {
+      "first": 214,
+      "last": 214
+    },
+    {
+      "first": 217,
+      "last": 266
     }
   ],
   "recovery_jumps": [],
@@ -187,10 +207,16 @@
         },
         "mode": "free",
         "place": {
-          "height": 480,
-          "width": 720,
-          "x": -190,
-          "y": -726
+          "height": 797,
+          "width": 1092,
+          "x": -66,
+          "y": -783
+        },
+        "placed": {
+          "actor": "human:local",
+          "at": "2026-10-26T15:26:15.120Z",
+          "eid": "01a178d1-c24d-7539-98d0-00fb762f6fbf",
+          "seq": 211
         },
         "rules": {
           "add_card": "anyone",
@@ -206,6 +232,16 @@
         "set_by": "delegate",
         "source": {
           "path": "docs/test.puml"
+        },
+        "source_write": {
+          "at": {
+            "actor": "process:towermd",
+            "at": "2026-10-26T15:27:04.419Z",
+            "eid": "git:66a4d6a0337661b9055fa388f4b12d3d71a2356a2270e076f7d7522809850570",
+            "seq": 215
+          },
+          "commit": "9b7808e8700512470660f2cba4c2fcc7b95ade4d",
+          "sha256": "9028dfc415fa1bd22d1554a09841385784a85914583b1f93487d076c7035b718"
         },
         "states": [
           "To Do",
@@ -278,11 +314,11 @@
     },
     "MainInspection": {
       "complete": true,
-      "eid": "01a178cb-1c42-7192-aa51-5b44b71694f4",
+      "eid": "01a178d2-946b-7768-8a04-5194dde32a18",
       "error": null,
-      "main": "dd00fa1932110bd687235bf73d2870636493507c",
+      "main": "9b7808e8700512470660f2cba4c2fcc7b95ade4d",
       "passed": true,
-      "previous_main": "c895517ef8e42e3826d6bd858cc3afa47ff7dac6"
+      "previous_main": "7779e03e462eca1dad66a808f794f3fb0bfd395f"
     },
     "Prompt": {},
     "Proposal": {},
