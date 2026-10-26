@@ -1,0 +1,181 @@
+{
+  "edges": [
+    {
+      "fromEnd": "none",
+      "fromNode": "A-scan-1",
+      "fromSide": "right",
+      "id": "cochange-1",
+      "label": "共同修改 1 次",
+      "toEnd": "none",
+      "toNode": "A-scan-2",
+      "toSide": "left"
+    },
+    {
+      "fromEnd": "none",
+      "fromNode": "A-scan-1",
+      "fromSide": null,
+      "id": "interface-IF-package-info",
+      "label": "接口：安装包说明页的文件交付约定",
+      "toEnd": "arrow",
+      "toNode": "A-scan-2",
+      "toSide": null
+    }
+  ],
+  "nodes": [
+    {
+      "file": "docs/tower/arch/A-scan-1.md",
+      "height": 180,
+      "id": "A-scan-1",
+      "towermd": {
+        "confidence": 0.5,
+        "obj": "A-scan-1"
+      },
+      "type": "file",
+      "width": 300,
+      "x": 0,
+      "y": 0
+    },
+    {
+      "file": "docs/tower/arch/A-scan-2.md",
+      "height": 180,
+      "id": "A-scan-2",
+      "towermd": {
+        "confidence": 0.68,
+        "obj": "A-scan-2"
+      },
+      "type": "file",
+      "width": 300,
+      "x": 360,
+      "y": 0
+    },
+    {
+      "file": "docs/tower/arch/A-scan-3.md",
+      "height": 180,
+      "id": "A-scan-3",
+      "towermd": {
+        "confidence": 0.86,
+        "obj": "A-scan-3"
+      },
+      "type": "file",
+      "width": 300,
+      "x": 0,
+      "y": 260
+    },
+    {
+      "height": 240,
+      "id": "project-01a17846-e88a-718d-bf61-3faa88e8cb1d",
+      "label": "xiaobucubic",
+      "towermd": {
+        "region": "project"
+      },
+      "type": "group",
+      "width": 320,
+      "x": -380,
+      "y": 0
+    },
+    {
+      "file": "docs/tower/intents/I-glance.md",
+      "height": 180,
+      "id": "I-glance",
+      "towermd": {
+        "confidence": 0.5,
+        "obj": "I-glance"
+      },
+      "type": "file",
+      "width": 300,
+      "x": 0,
+      "y": 539
+    },
+    {
+      "file": "docs/tower/intents/I-truthful-data.md",
+      "height": 180,
+      "id": "I-truthful-data",
+      "towermd": {
+        "confidence": 0.5,
+        "obj": "I-truthful-data"
+      },
+      "type": "file",
+      "width": 300,
+      "x": 360,
+      "y": 540
+    },
+    {
+      "file": "docs/tower/intents/I-safe-delivery.md",
+      "height": 180,
+      "id": "I-safe-delivery",
+      "towermd": {
+        "confidence": 0.5,
+        "obj": "I-safe-delivery"
+      },
+      "type": "file",
+      "width": 300,
+      "x": 720,
+      "y": 540
+    },
+    {
+      "file": "docs/tower/arch/IF-package-info.md",
+      "height": 180,
+      "id": "IF-package-info",
+      "towermd": {
+        "confidence": 0.5,
+        "obj": "IF-package-info"
+      },
+      "type": "file",
+      "width": 300,
+      "x": 0,
+      "y": 800
+    },
+    {
+      "file": "docs/tower/specs/AC-package-info.md",
+      "height": 180,
+      "id": "AC-package-info",
+      "towermd": {
+        "confidence": 0.5,
+        "obj": "AC-package-info"
+      },
+      "type": "file",
+      "width": 300,
+      "x": 360,
+      "y": 800
+    },
+    {
+      "file": "docs/tower/specs/AC-client-behavior.md",
+      "height": 180,
+      "id": "AC-client-behavior",
+      "towermd": {
+        "confidence": 0.5,
+        "obj": "AC-client-behavior"
+      },
+      "type": "file",
+      "width": 300,
+      "x": 720,
+      "y": 800
+    },
+    {
+      "file": "docs/tower/specs/AC-device-delivery.md",
+      "height": 180,
+      "id": "AC-device-delivery",
+      "towermd": {
+        "confidence": 0.5,
+        "obj": "AC-device-delivery"
+      },
+      "type": "file",
+      "width": 300,
+      "x": 0,
+      "y": 1060
+    },
+    {
+      "file": "docs/tower/specs/AC-service-contract.md",
+      "height": 180,
+      "id": "AC-service-contract",
+      "towermd": {
+        "confidence": 0.5,
+        "obj": "AC-service-contract"
+      },
+      "type": "file",
+      "width": 300,
+      "x": 360,
+      "y": 1059
+    }
+  ]
+}
