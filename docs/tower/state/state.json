@@ -1,7 +1,7 @@
 {
   "version": 1,
   "project_id": "01a17846-e88a-718d-bf61-3faa88e8cb1d",
-  "seq": 125,
+  "seq": 203,
   "epoch": 1,
   "epoch_high_water": 1,
   "omitted_heartbeats": [
@@ -20,6 +20,30 @@
     {
       "first": 121,
       "last": 124
+    },
+    {
+      "first": 127,
+      "last": 127
+    },
+    {
+      "first": 129,
+      "last": 129
+    },
+    {
+      "first": 131,
+      "last": 188
+    },
+    {
+      "first": 190,
+      "last": 190
+    },
+    {
+      "first": 192,
+      "last": 200
+    },
+    {
+      "first": 202,
+      "last": 202
     }
   ],
   "recovery_jumps": [],
@@ -68,8 +92,14 @@
         "place": {
           "height": 524,
           "width": 640,
-          "x": -320,
-          "y": -262
+          "x": -234,
+          "y": -196
+        },
+        "placed": {
+          "actor": "human:local",
+          "at": "2026-10-26T14:48:41.874Z",
+          "eid": "01a178af-5c40-7f99-ac93-41484c78016e",
+          "seq": 128
         },
         "rules": {
           "add_card": "anyone",
@@ -131,6 +161,106 @@
           "version": "1.0.0"
         },
         "title": "四象限"
+      },
+      "C-t6xe9itr": {
+        "created": {
+          "actor": "human:local",
+          "at": "2026-10-26T15:24:54.850Z",
+          "eid": "01a178d0-7803-7366-abe9-48fa2f0d222b",
+          "seq": 203
+        },
+        "done_states": [
+          "Done"
+        ],
+        "id": "C-t6xe9itr",
+        "layout": {
+          "structure": [
+            "nesting",
+            "relations"
+          ],
+          "x": "none",
+          "y": "none"
+        },
+        "limits": {
+          "body_max": 100,
+          "title_max": 30
+        },
+        "mode": "free",
+        "place": {
+          "height": 480,
+          "width": 720,
+          "x": -190,
+          "y": -726
+        },
+        "rules": {
+          "add_card": "anyone",
+          "add_link": "anyone",
+          "change_state": "anyone",
+          "done_needs_human": true,
+          "edit_text": "anyone",
+          "fields": [],
+          "require_source": false,
+          "text": "每个元素写别名（as 别名）；状态只用容器规则中声明的构造型或颜色；理由写成 note <<why>>；不改动 skinparam、主题、!include 等样式行；每次只改与本次进展相关的行。",
+          "transitions": {}
+        },
+        "set_by": "delegate",
+        "source": {
+          "path": "docs/test.puml"
+        },
+        "states": [
+          "To Do",
+          "In Progress",
+          "Done"
+        ],
+        "template": {
+          "definition": {
+            "agent_rules": "每个元素写别名（as 别名）；状态只用容器规则中声明的构造型或颜色；理由写成 note <<why>>；不改动 skinparam、主题、!include 等样式行；每次只改与本次进展相关的行。",
+            "callout_map": {
+              "<<adjust>>": "adjust",
+              "<<question>>": "question",
+              "<<why>>": "why"
+            },
+            "default_set_by": "delegate",
+            "done_states": [
+              "Done"
+            ],
+            "file_types": [
+              ".puml",
+              ".plantuml"
+            ],
+            "id": "plantuml",
+            "layout": {
+              "structure": [
+                "nesting",
+                "relations"
+              ],
+              "x": "none",
+              "y": "none"
+            },
+            "limits": {
+              "body_max": 100,
+              "title_max": 30
+            },
+            "parser": "builtin:plantuml-v1",
+            "source": "file",
+            "states": [
+              "To Do",
+              "In Progress",
+              "Done"
+            ],
+            "status_map": {
+              "<<done>>": "Done",
+              "<<todo>>": "To Do",
+              "<<wip>>": "In Progress"
+            },
+            "title": "PlantUML",
+            "type": "template",
+            "version": "1.1.0"
+          },
+          "id": "plantuml",
+          "version": "1.1.0"
+        },
+        "title": "PlantUML"
       }
     },
     "Hold": {},
@@ -148,15 +278,44 @@
     },
     "MainInspection": {
       "complete": true,
-      "eid": "01a178ac-1715-7768-8513-78ba2c48db52",
+      "eid": "01a178cb-1c42-7192-aa51-5b44b71694f4",
       "error": null,
-      "main": "c895517ef8e42e3826d6bd858cc3afa47ff7dac6",
+      "main": "dd00fa1932110bd687235bf73d2870636493507c",
       "passed": true,
-      "previous_main": "64afeb8a669b29069319e7e7f90e3a952afc07e4"
+      "previous_main": "c895517ef8e42e3826d6bd858cc3afa47ff7dac6"
     },
     "Prompt": {},
     "Proposal": {},
     "Run": {},
+    "Starter": {
+      "research": {
+        "at": {
+          "actor": "human:local",
+          "at": "2026-10-26T15:19:41.128Z",
+          "eid": "01a178cb-b105-77eb-b30c-492d6e44bc9a",
+          "seq": 191
+        },
+        "choice": "adopted"
+      },
+      "software": {
+        "at": {
+          "actor": "human:local",
+          "at": "2026-10-26T14:49:21.918Z",
+          "eid": "01a178af-f367-7bd0-a4b5-2c250fafe186",
+          "seq": 130
+        },
+        "choice": "adopted"
+      },
+      "writing": {
+        "at": {
+          "actor": "human:local",
+          "at": "2026-10-26T15:24:30.844Z",
+          "eid": "01a178d0-20ea-7090-9778-e401e5a393f1",
+          "seq": 201
+        },
+        "choice": "dismissed"
+      }
+    },
     "Task": {}
   }
 }
