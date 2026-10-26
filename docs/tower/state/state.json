@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "project_id": "01a17846-e88a-718d-bf61-3faa88e8cb1d",
+  "seq": 61,
+  "epoch": 1,
+  "epoch_high_water": 1,
+  "omitted_heartbeats": [
+    {
+      "first": 3,
+      "last": 61
+    }
+  ],
+  "recovery_jumps": [],
+  "projection": {
+    "Alert": {},
+    "Baseline": {},
+    "BaselineApproval": {},
+    "Evidence": {},
+    "Hold": {},
+    "MainInspection": {
+      "complete": true,
+      "eid": "01a17877-5732-729d-8918-8534455ffa14",
+      "error": null,
+      "main": "64afeb8a669b29069319e7e7f90e3a952afc07e4",
+      "passed": true,
+      "previous_main": null
+    },
+    "Prompt": {},
+    "Proposal": {},
+    "Run": {},
+    "Task": {}
+  }
+}
