@@ -1,13 +1,25 @@
 {
   "version": 1,
   "project_id": "01a17846-e88a-718d-bf61-3faa88e8cb1d",
-  "seq": 61,
+  "seq": 125,
   "epoch": 1,
   "epoch_high_water": 1,
   "omitted_heartbeats": [
     {
       "first": 3,
-      "last": 61
+      "last": 62
+    },
+    {
+      "first": 64,
+      "last": 116
+    },
+    {
+      "first": 118,
+      "last": 119
+    },
+    {
+      "first": 121,
+      "last": 124
     }
   ],
   "recovery_jumps": [],
@@ -16,14 +28,131 @@
     "Baseline": {},
     "BaselineApproval": {},
     "Evidence": {},
+    "Frame": {
+      "C-6851mg3e": {
+        "created": {
+          "actor": "human:local",
+          "at": "2026-10-26T14:48:14.640Z",
+          "eid": "01a178ae-f56f-70c4-88c3-b94ccf3cab9a",
+          "seq": 125
+        },
+        "done_states": [],
+        "id": "C-6851mg3e",
+        "layout": {
+          "structure": [],
+          "x": {
+            "category": {
+              "field": "urgency",
+              "values": [
+                "紧急",
+                "不紧急"
+              ]
+            }
+          },
+          "y": {
+            "category": {
+              "field": "importance",
+              "values": [
+                "重要",
+                "不重要"
+              ]
+            }
+          }
+        },
+        "limits": {
+          "body_max": 100,
+          "per_lane_max": 7,
+          "title_max": 30
+        },
+        "mode": "free",
+        "place": {
+          "height": 524,
+          "width": 640,
+          "x": -320,
+          "y": -262
+        },
+        "rules": {
+          "add_card": "anyone",
+          "add_link": "anyone",
+          "change_state": "anyone",
+          "done_needs_human": true,
+          "edit_text": "anyone",
+          "fields": [
+            "importance",
+            "source",
+            "urgency"
+          ],
+          "per_lane_max": 7,
+          "require_source": false,
+          "text": "",
+          "transitions": {}
+        },
+        "set_by": "human",
+        "states": [],
+        "template": {
+          "definition": {
+            "card_fields": {
+              "importance": "text",
+              "source": "ref",
+              "urgency": "text"
+            },
+            "default_set_by": "human",
+            "export": [
+              "markdown"
+            ],
+            "id": "quadrant",
+            "layout": {
+              "structure": "none",
+              "x": {
+                "category": "urgency",
+                "values": [
+                  "紧急",
+                  "不紧急"
+                ]
+              },
+              "y": {
+                "category": "importance",
+                "values": [
+                  "重要",
+                  "不重要"
+                ]
+              }
+            },
+            "limits": {
+              "body_max": 100,
+              "per_lane_max": 7,
+              "title_max": 30
+            },
+            "title": "四象限",
+            "type": "template",
+            "version": "1.0.0"
+          },
+          "id": "quadrant",
+          "version": "1.0.0"
+        },
+        "title": "四象限"
+      }
+    },
     "Hold": {},
+    "Idea": {
+      "01a178ac-f07b-7519-9fe8-a5f0c1f4398a": {
+        "added": {
+          "actor": "human:local",
+          "at": "2026-10-26T14:46:02.110Z",
+          "eid": "01a178ac-f07b-7519-9fe8-a5f0c1f4398a",
+          "seq": 120
+        },
+        "id": "01a178ac-f07b-7519-9fe8-a5f0c1f4398a",
+        "text": "加入刷新功能"
+      }
+    },
     "MainInspection": {
       "complete": true,
-      "eid": "01a17877-5732-729d-8918-8534455ffa14",
+      "eid": "01a178ac-1715-7768-8513-78ba2c48db52",
       "error": null,
-      "main": "64afeb8a669b29069319e7e7f90e3a952afc07e4",
+      "main": "c895517ef8e42e3826d6bd858cc3afa47ff7dac6",
       "passed": true,
-      "previous_main": null
+      "previous_main": "64afeb8a669b29069319e7e7f90e3a952afc07e4"
     },
     "Prompt": {},
     "Proposal": {},
