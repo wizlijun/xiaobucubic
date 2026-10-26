@@ -457,7 +457,8 @@ class Handler(BaseHTTPRequestHandler):
             now = int(time.time())
             messages = self.server.store.read(lambda data: [
                 m for m in _active(data["messages"], now) if role == "admin" or m.get("sender") == "bot"])
-            return self._send(200, with_utc({"now": now, "messages": messages}))
+            return self._send(200, with_utc({"now": now, "messages": messages,
+                                              "capabilities": {"safe_create": True}}))
         if path != "/v1/display":
             return self._error(404, "not found")
         # 写 token 可读，只读 token 不可写。
@@ -574,6 +575,9 @@ class Handler(BaseHTTPRequestHandler):
             return 200, {"messages": messages}
 
         message = clean_message(body, now, bot=bot)
+        safe_create = body.get("safe_create", False)
+        if not isinstance(safe_create, bool):
+            raise BadRequest("safe_create 必须是布尔值")
 
         def upsert(data):
             messages = _active(data["messages"], now)
@@ -585,6 +589,10 @@ class Handler(BaseHTTPRequestHandler):
                     break
             else:
                 if len(messages) >= MAX_MESSAGES:
+                    # An opted-in bot must never evict another reminder. Check
+                    # capacity under the same store lock as the insertion.
+                    if bot and safe_create:
+                        raise Conflict("提醒已满，safe_create 不会替换已有提醒")
                     # 已满时丢弃最早的一条；机器人只会挤掉自己推送的提醒。
                     victims = [m for m in messages if m.get("sender") == "bot"] if bot else messages
                     if not victims:
