@@ -35,14 +35,21 @@ function M.normalize(doc)
     subscriptions={}, messages={}}
   local seen = {}
   for _, p in ipairs(doc.subscriptions) do
-    if type(p)=="table" and type(p.id)=="string" and not seen[p.id] and #out.subscriptions<3 then
+    if type(p)=="table" and type(p.id)=="string" and p.id~="" and not seen[p.id] then
       seen[p.id]=true
-      local row={id=text(p.id,"",32),name=text(p.name,p.id,20),plan=text(p.plan,"",24),
+      local row={id=text(p.id,"",64),name=text(p.name,p.id,40),plan=text(p.plan,"",24),
         source=source(p.source),updated_at=epoch(p.updated_at),windows={},note=text(p.note,"",80)}
       for _, w in ipairs(type(p.windows)=="table" and p.windows or {}) do
         if type(w)=="table" and #row.windows<2 then
-          row.windows[#row.windows+1]={label=text(w.label,"用量",16),
+          local window={label=text(w.label,"用量",16),
             used_percent=number(w.used_percent,0,1000),reset_at=epoch(w.reset_at)}
+          local total,used=number(w.total_bytes,1,9007199254740991),number(w.used_bytes,0,9007199254740991)
+          if total and used and total%1==0 and used%1==0 then
+            window.total_bytes=total;window.used_bytes=used
+            window.remaining_bytes=math.max(0,total-used)
+            window.used_percent=used/total*100
+          end
+          row.windows[#row.windows+1]=window
         end
       end
       out.subscriptions[#out.subscriptions+1]=row
@@ -108,10 +115,32 @@ function M.active_messages(data, now)
   return active
 end
 
+function M.quota_pages(data)
+  return math.max(1,math.ceil(#(data and data.subscriptions or {})/6))
+end
+
 function M.pages(data, now)
-  local pages={{kind="subscriptions"}}
-  if #M.active_messages(data,now)>0 then pages[2]={kind="messages"} end
+  local pages={}
+  for i=1,M.quota_pages(data) do pages[#pages+1]={kind="subscriptions",quota_page=i} end
+  if #M.active_messages(data,now)>0 then pages[#pages+1]={kind="messages"} end
   return pages
+end
+
+function M.subscription_layout(data, page)
+  local count=#(data and data.subscriptions or {})
+  page=math.max(1,math.min(page or 1,M.quota_pages(data)))
+  local first=(page-1)*6+1
+  local visible=math.min(6,count-first+1)
+  local columns=visible>4 and 2 or 1
+  local rows=math.max(1,math.ceil(visible/columns))
+  local height=math.min(52,math.floor((164-(rows-1)*3)/rows))
+  local width=columns==2 and 146 or 296
+  local cards={}
+  for i=1,visible do
+    cards[#cards+1]={index=first+i-1,x=12+((i-1)%columns)*(width+4),
+      y=72+math.floor((i-1)/columns)*(height+3),width=width,height=height}
+  end
+  return cards,page
 end
 
 function M.select_window(provider, index)
@@ -119,7 +148,7 @@ function M.select_window(provider, index)
 end
 
 function M.companion_window(provider, index)
-  if provider.id~="claude" or #provider.windows<2 then return nil end
+  if #provider.windows<2 then return nil end
   -- Array order defines the windows; labels remain display-only.
   return provider.windows[index==2 and 1 or 2]
 end
@@ -134,6 +163,16 @@ end
 function M.remaining(window)
   if not window or window.used_percent==nil then return nil end
   return math.floor(math.max(0,100-window.used_percent))
+end
+
+function M.format_bytes(bytes)
+  if not number(bytes,0,9007199254740991) then return "--" end
+  local units={"B","KiB","MiB","GiB","TiB","PiB"}
+  local unit=1
+  while bytes>=1024 and unit<#units do bytes=bytes/1024;unit=unit+1 end
+  -- Round down so a small balance never appears larger than the actual value.
+  local value=math.floor(bytes*10)/10
+  return string.format(value%1==0 and "%.0f" or "%.1f",value)..units[unit]
 end
 
 function M.quota_level(remaining)

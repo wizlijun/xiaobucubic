@@ -5,7 +5,7 @@ local codec=sjson or json
 local C={bg=0x070C12,panel=0x111C28,line=0x203142,text=0xF0F5FC,muted=0x8497AC,
   mint=0x6DE1C2,blue=0x83B6FF,amber=0xFFC078,yellow=0xFFD166,red=0xFF5F6D}
 local cfg={api_url="",read_token="",refresh_seconds=60,rotate_seconds=15,auto_rotate=true}
-local state={alive=true,busy=false,tick=0,page=1,window=1,message=1,message_part=1,last_fetch=-10000,request_id=0,
+local state={alive=true,busy=false,tick=0,page=1,quota_page=1,window=1,message=1,message_part=1,last_fetch=-10000,request_id=0,
   last_received=nil,rotate_at=15,connection="等待配置",snapshot=nil,error=nil,failures=0}
 local fonts={}
 local ui={nodes={},props={}}
@@ -128,6 +128,7 @@ local function sync_messages()
   if key~=state.message_key then state.message_part=1 end
   state.message_key=key
   state.active_count=#messages
+  state.quota_page=math.min(state.quota_page,model.quota_pages(state.snapshot))
   if #messages==0 then state.page=1 end
   return messages
 end
@@ -205,15 +206,24 @@ local function draw_subscriptions()
   local data=state.snapshot
   if not data or #data.subscriptions==0 then
     label("quota.empty.title",root,18,113,284,26,"等待额度数据",medium,C.text)
-    label("quota.empty.body",root,18,149,284,60,cfg.api_url=="" and "设置 config.json 的 api_url，连接你的数据接口。" or "接口接通后，这里显示 Claude、Codex 和 Grok 的剩余额度。",medium,C.muted)
+    label("quota.empty.body",root,18,149,284,60,cfg.api_url=="" and "设置 config.json 的 api_url，连接你的数据接口。" or "接口接通后，这里显示服务端提供的剩余额度。",medium,C.muted)
     return
   end
-  for i,p in ipairs(data.subscriptions) do
-    local id="quota."..i
+  local layout=model.subscription_layout(data,state.quota_page)
+  if model.quota_pages(data)>1 then
+    label("quota.pages",root,211,23,34,14,state.quota_page.."/"..model.quota_pages(data),small,C.muted,LV_TEXT_ALIGN_RIGHT)
+  end
+  local palette={C.amber,C.mint,C.blue}
+  local clip=LV_LABEL_LONG_DOT or LV_LABEL_LONG_CLIP or LV_LABEL_LONG_WRAP
+  for slot,card in ipairs(layout) do
+    local p=data.subscriptions[card.index]
+    local id="quota."..slot
+    local width,height=card.width,card.height
+    local grid=width<200
     -- Both layers must be translucent: an opaque panel would hide the weather
     -- even when the progress tint itself has a low opacity.
-    local panel=box(id,root,12,72+(i-1)*55,296,52,C.panel,7,state.background and 52 or 255)
-    local accent=p.id=="claude" and C.amber or p.id=="codex" and C.mint or C.blue
+    local panel=box(id,root,card.x,card.y,width,height,C.panel,7,state.background and 52 or 255)
+    local accent=palette[(card.index-1)%#palette+1]
     local w=model.select_window(p,state.window)
     local companion=model.companion_window(p,state.window)
     local status=model.window_state(p,w,now(),data.stale_after_seconds)
@@ -223,23 +233,32 @@ local function draw_subscriptions()
     local tone=level=="critical" and C.red or level=="low" and C.yellow or valid and accent or C.muted
     -- Full-height progress tint sits behind the text; width is remaining quota.
     -- Every color (including warning/red) stays translucent and fades downwards.
-    local fill=box(id..".progress",panel,0,0,value and math.max(1,296*math.min(value,100)/100) or 1,52,
+    local fill=box(id..".progress",panel,0,0,value and math.max(1,width*math.min(value,100)/100) or 1,height,
       tone,7,value and value>0 and (valid and 64 or 35) or 0)
     style(fill,"bg_grad_color",mix_color(C.panel,tone,0.16))
     style(fill,"bg_grad_dir",LV_GRAD_DIR_VER)
     style(fill,"bg_main_stop",0);style(fill,"bg_grad_stop",255)
-    label(id..".name",panel,10,5,155,20,p.name,medium,C.text)
-    label(id..".value",panel,202,5,82,20,value and num(value,"%") or "--",medium,
-      tone,LV_TEXT_ALIGN_RIGHT)
+    local balance=w and w.remaining_bytes and (model.format_bytes(w.remaining_bytes).."/"..model.format_bytes(w.total_bytes))
+    local top=(height<45 or grid) and 2 or 5
+    local value_width=grid and 50 or balance and 176 or 82
+    local value_x=width-12-value_width
+    label(id..".name",panel,grid and 6 or 10,top,value_x-(grid and 10 or 16),20,p.name,medium,C.text,LV_TEXT_ALIGN_LEFT,clip)
+    label(id..".value",panel,value_x,top,value_width,20,
+      not grid and balance or value and num(value,"%") or "--",medium,tone,LV_TEXT_ALIGN_RIGHT,clip)
     local detail=w and w.label or "暂无用量"
     -- With two windows, omit the redundant official-source label so the
     -- window and reset time fit without a moving marquee. Keep non-official sources.
-    if not companion or p.source~="official" then detail=detail.." · "..source_names[p.source] end
+    if balance then detail=detail.." · "..(value and num(value,"%") or "--")
+    elseif (not companion and not grid and height>=45) or p.source~="official" then detail=detail.." · "..source_names[p.source] end
     if status=="stale" then detail=detail.." · 已过期"
     elseif status=="expired" then detail=detail.." · 待刷新"
     elseif w and w.reset_at then detail=detail.." · "..countdown(w.reset_at) end
-    label(id..".detail",panel,10,28,companion and 160 or 278,15,detail,small,C.muted,
-      LV_TEXT_ALIGN_LEFT,companion and (LV_LABEL_LONG_DOT or LV_LABEL_LONG_CLIP or LV_LABEL_LONG_WRAP) or LV_LABEL_LONG_WRAP)
+    local detail_y=(height<45 or grid) and 21 or 28
+    label(id..".detail",panel,grid and 6 or 10,detail_y,grid and width-12 or companion and 160 or width-20,
+      (height<45 or grid) and 13 or 15,grid and balance or detail,small,C.muted,LV_TEXT_ALIGN_LEFT,clip)
+    if grid and balance and not companion then
+      label(id..".reset",panel,6,35,width-12,13,detail,small,C.muted,LV_TEXT_ALIGN_LEFT,clip)
+    end
     if companion then
       local secondary_status=model.window_state(p,companion,now(),data.stale_after_seconds)
       local secondary_value=model.remaining(companion)
@@ -249,12 +268,14 @@ local function draw_subscriptions()
       local summary=companion.label.." "..(secondary_value and num(secondary_value,"%") or "--")
       if secondary_status=="stale" then summary=summary.." · 已过期"
       elseif secondary_status=="expired" then summary=summary.." · 待刷新" end
-      label(id..".secondary.label",panel,178,28,106,15,summary,small,secondary_tone,
-        LV_TEXT_ALIGN_RIGHT,LV_LABEL_LONG_DOT or LV_LABEL_LONG_CLIP or LV_LABEL_LONG_WRAP)
+      label(id..".secondary.label",panel,grid and 6 or width-118,grid and 35 or detail_y,
+        grid and width-12 or 106,(height<45 or grid) and 13 or 15,summary,small,secondary_tone,LV_TEXT_ALIGN_RIGHT,clip)
       -- A narrow inset rail blends into the bottom of the main quota fill.
-      box(id..".secondary.track",panel,10,46,274,4,C.muted,2,24)
-      local rail=box(id..".secondary.fill",panel,10,46,
-        secondary_value and math.max(1,274*math.min(secondary_value,100)/100) or 1,4,
+      local rail_y,rail_height=height-3,2
+      if not grid and height>=45 then rail_y=height-6;rail_height=4 end
+      box(id..".secondary.track",panel,10,rail_y,width-22,rail_height,C.muted,2,24)
+      local rail=box(id..".secondary.fill",panel,10,rail_y,
+        secondary_value and math.max(1,(width-22)*math.min(secondary_value,100)/100) or 1,rail_height,
         secondary_tone,2,secondary_value and secondary_value>0 and (secondary_status=="ok" and 112 or 55) or 0)
       style(rail,"bg_grad_color",mix_color(C.panel,secondary_tone,0.35))
       style(rail,"bg_grad_dir",LV_GRAD_DIR_VER)
@@ -365,9 +386,12 @@ local function advance_message()
 end
 local function switch_page(delta)
   sync_messages()
-  local n=#model.pages(state.snapshot,now())
+  local pages=model.pages(state.snapshot,now())
+  local current=state.page==2 and #pages or state.quota_page
   if state.page==2 then advance_message() end
-  state.page=(state.page-1+delta)%n+1
+  local target=pages[(current-1+delta)%#pages+1]
+  state.page=target.kind=="messages" and 2 or 1
+  state.quota_page=target.quota_page or state.quota_page
   state.rotate_at=state.tick+cfg.rotate_seconds
 end
 local function stop()

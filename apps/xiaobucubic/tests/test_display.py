@@ -57,9 +57,9 @@ class DisplayTest(unittest.TestCase):
         self.fixture["subscriptions"]=[dict(self.fixture["subscriptions"][0],id=str(n)) for n in range(30)]
         self.fixture["messages"]=[{"text":"test"} for _ in range(30)]
         data=self.normalize(self.fixture)
-        self.assertEqual(len(data.subscriptions),3)
+        self.assertEqual(len(data.subscriptions),30)
         self.assertEqual(len(data.messages),12)
-        self.assertEqual(len(self.model.pages(data)),2)
+        self.assertEqual(len(self.model.pages(data)),6)
 
     def test_remaining_and_long_message(self):
         data=self.normalize(self.fixture)
@@ -89,7 +89,7 @@ class DisplayTest(unittest.TestCase):
         lua.globals().PY_MODEL=self.model
         lua.globals().PY_DOC=lua_value(lua,self.fixture)
         lua.execute('''
-        labels={}; requests={}; writes={}; timers={}; nodes={}; node_id=1; cleans=0; mutations={}; images=0; mono=0; styles={}; long_modes={}
+        labels={}; requests={}; writes={}; timers={}; nodes={}; node_id=1; cleans=0; mutations={}; images=0; mono=0; styles={}; long_modes={}; positions={}; sizes={}
         LV_PART_MAIN=0; LV_OBJ_FLAG_SCROLLABLE=1; LV_TEXT_ALIGN_LEFT=0; LV_TEXT_ALIGN_RIGHT=1; LV_TEXT_ALIGN_CENTER=2
         LV_LABEL_LONG_WRAP=0; LV_LABEL_LONG_SCROLL=1; LV_LABEL_LONG_DOT=2; LV_GRAD_DIR_VER=1
         LV_FONT_MONTSERRAT_12=12; LV_FONT_MONTSERRAT_16=16; LV_FONT_MONTSERRAT_20=20; LV_FONT_MONTSERRAT_28=28
@@ -119,8 +119,13 @@ class DisplayTest(unittest.TestCase):
         lv_obj_create=create;lv_label_create=create
         lv_img_create=create;lv_img_set_src=function(id,path) image_path=path;images=images+1 end
         lv_obj_clean=function() labels={};nodes={};cleans=cleans+1 end
-        lv_obj_del=function(id) labels[id]=nil;nodes[id]=nil end
-        lv_obj_set_pos=function() end;lv_obj_set_size=function() end
+        lv_obj_del=function(id)
+          local children={};for child,parent in pairs(nodes) do if parent==id then children[#children+1]=child end end
+          for _,child in ipairs(children) do lv_obj_del(child) end
+          labels[id]=nil;nodes[id]=nil;positions[id]=nil;sizes[id]=nil
+        end
+        lv_obj_set_pos=function(id,x,y) positions[id]={x=x,y=y} end
+        lv_obj_set_size=function(id,w,h) sizes[id]={width=w,height=h} end
         lv_obj_clear_flag=function() end;lv_label_set_long_mode=function(id,mode) long_modes[id]=mode end
         lv_label_set_text=function(id,value) assert(type(value)=='string');labels[id]=value;mutations[#mutations+1]={id=id,text=value} end
         for _,s in ipairs({'bg_color','bg_opa','bg_grad_color','bg_grad_dir','bg_main_stop','bg_grad_stop','border_width','radius','pad_all','text_font','text_color','text_align','text_line_space'}) do
@@ -136,6 +141,126 @@ class DisplayTest(unittest.TestCase):
             """)
         lua.execute((ROOT/"package/main.lua").read_text())
         return lua.globals()
+
+    def dynamic_subscriptions(self, count):
+        now=self.fixture["generated_at"]
+        return [{"id":f"provider-{i}","name":f"服务{i}","source":"official","updated_at":now,
+                 "windows":[{"label":"本期","used_percent":i,"reset_at":now+86400}]}
+                for i in range(count)]
+
+    def test_dynamic_layout_retains_order_and_never_overflows(self):
+        for count in (0,1,2,3,4,5,6,7,12,13,30):
+            with self.subTest(count=count):
+                self.fixture["subscriptions"]=self.dynamic_subscriptions(count)
+                data=self.normalize(self.fixture)
+                seen=[]
+                for page in range(1,self.model.quota_pages(data)+1):
+                    cards,actual=self.model.subscription_layout(data,page)
+                    self.assertEqual(actual,page)
+                    boxes=[]
+                    for card in cards.values():
+                        seen.append(data.subscriptions[card.index].id)
+                        x,y,w,h=card.x,card.y,card.width,card.height
+                        self.assertGreaterEqual(x,0);self.assertGreaterEqual(y,72)
+                        self.assertLessEqual(x+w,320);self.assertLessEqual(y+h,240)
+                        for bx,by,bw,bh in boxes:
+                            self.assertFalse(x<bx+bw and x+w>bx and y<by+bh and y+h>by)
+                        boxes.append((x,y,w,h))
+                self.assertEqual(seen,[p["id"] for p in self.fixture["subscriptions"]])
+
+    def test_traffic_balance_from_fields_not_provider_id(self):
+        self.fixture["subscriptions"]=self.dynamic_subscriptions(4)
+        self.fixture["subscriptions"][3]["windows"][0].update(
+            total_bytes=1000*1024**3,used_bytes=250*1024**3,remaining_bytes=1,used_percent=99)
+        data=self.normalize(self.fixture)
+        w=data.subscriptions[4].windows[1]
+        self.assertEqual(w.remaining_bytes,750*1024**3)
+        self.assertEqual(w.used_percent,25)
+        g=self.boot();g.requests[1](200,"valid")
+        self.assertIn("服务3",list(g.labels.values()))
+        self.assertIn("750GiB/1000GiB",list(g.labels.values()))
+        self.assertTrue(any("75%" in value for value in g.labels.values()))
+        self.assertEqual(self.model.format_bytes(0),"0B")
+        self.assertEqual(self.model.format_bytes(1024**4),"1TiB")
+        self.assertEqual(self.model.format_bytes(1024**3-1),"1023.9MiB")
+        self.assertEqual(self.model.format_bytes(None),"--")
+
+    def test_invalid_traffic_does_not_show_fabricated_balance(self):
+        for total,used in ((0,1),(100,-1),(True,1),(100,"1"),(float("inf"),1),(100,0.5)):
+            with self.subTest(total=total,used=used):
+                self.fixture["subscriptions"]=self.dynamic_subscriptions(1)
+                self.fixture["subscriptions"][0]["windows"][0].update(total_bytes=total,used_bytes=used)
+                w=self.normalize(self.fixture).subscriptions[1].windows[1]
+                self.assertIsNone(w.remaining_bytes)
+        self.fixture["subscriptions"][0]["windows"][0].update(total_bytes=100,used_bytes=125)
+        w=self.normalize(self.fixture).subscriptions[1].windows[1]
+        self.assertEqual(w.remaining_bytes,0)
+        self.assertEqual(self.model.remaining(w),0)
+
+    def test_unknown_provider_two_windows_and_grid_geometry(self):
+        self.fixture["subscriptions"]=self.dynamic_subscriptions(6)
+        self.fixture["subscriptions"][0]["windows"].append({"label":"年额度","used_percent":50})
+        self.fixture["subscriptions"][5]["windows"][0].update(total_bytes=1000,used_bytes=400)
+        g=self.boot();g.requests[1](200,"valid")
+        self.assertIn("年额度 50%",list(g.labels.values()))
+        self.assertIn("600B/1000B",list(g.labels.values()))
+        for i in range(6):self.assertIn(f"服务{i}",list(g.labels.values()))
+        for label in g.labels:
+            parent=g.nodes[label]
+            if parent!=0:
+                pos,size=g.positions[label],g.sizes[label]
+                panel=g.sizes[parent]
+                self.assertGreaterEqual(pos.x,0);self.assertGreaterEqual(pos.y,0)
+                self.assertLessEqual(pos.x+size.width,panel.width)
+                self.assertLessEqual(pos.y+size.height,panel.height)
+        g.key.callback(g.key.UP,g.key.SHORT)
+        self.assertIn("50%",list(g.labels.values()))
+        self.assertIn("本期 100%",list(g.labels.values()))
+
+    def test_all_subscription_pages_reachable_without_messages(self):
+        self.fixture["subscriptions"]=self.dynamic_subscriptions(13)
+        self.fixture["messages"]=[]
+        g=self.boot();g.requests[1](200,"valid")
+        observed=set()
+        for page in range(3):
+            observed.update(text for text in g.labels.values() if text.startswith("服务"))
+            g.key.callback(g.key.RIGHT,g.key.SHORT)
+        self.assertEqual(observed,{f"服务{i}" for i in range(13)})
+        self.assertEqual(g.XIAOBUCUBIC.state.quota_page,1)
+        g.key.callback(g.key.LEFT,g.key.SHORT)
+        self.assertEqual(g.XIAOBUCUBIC.state.quota_page,3)
+        self.assertIn("服务12",list(g.labels.values()))
+        for _ in range(15):g.timers[1].callback()
+        self.assertEqual(g.XIAOBUCUBIC.state.quota_page,1)
+
+    def test_message_page_follows_all_quota_pages(self):
+        self.fixture["subscriptions"]=self.dynamic_subscriptions(7)
+        g=self.boot();g.requests[1](200,"valid")
+        for _ in range(15):g.timers[1].callback()
+        self.assertEqual(g.XIAOBUCUBIC.state.page,1)
+        self.assertEqual(g.XIAOBUCUBIC.state.quota_page,2)
+        for _ in range(15):g.timers[1].callback()
+        self.assertEqual(g.XIAOBUCUBIC.state.page,2)
+        g.key.callback(g.key.RIGHT,g.key.SHORT)
+        self.assertEqual(g.XIAOBUCUBIC.state.page,1)
+        self.assertEqual(g.XIAOBUCUBIC.state.quota_page,1)
+
+    def test_add_remove_reorder_reflows_without_clearing_screen(self):
+        self.fixture["messages"]=[]
+        self.fixture["subscriptions"]=self.dynamic_subscriptions(3)
+        g=self.boot();g.requests[1](200,"valid")
+        cleans=g.cleans
+        for count in (4,6,7,1,0,5):
+            self.fixture["subscriptions"]=list(reversed(self.dynamic_subscriptions(count)))
+            g.PY_DOC=lua_value(self.lua,self.fixture)
+            g.XIAOBUCUBIC.refresh(True);g.requests[len(g.requests)](200,"valid")
+            self.assertEqual(g.cleans,cleans)
+            self.assertLessEqual(g.XIAOBUCUBIC.state.quota_page,self.model.quota_pages(g.XIAOBUCUBIC.state.snapshot))
+            current=set(text for text in g.labels.values() if text.startswith("服务"))
+            self.assertEqual(current,{p["name"] for p in self.fixture["subscriptions"][:6]})
+            if count==7:
+                g.key.callback(g.key.RIGHT,g.key.SHORT)
+                self.assertEqual(g.XIAOBUCUBIC.state.quota_page,2)
 
     def test_http_auth_error_keeps_last_good_snapshot(self):
         g=self.boot()
