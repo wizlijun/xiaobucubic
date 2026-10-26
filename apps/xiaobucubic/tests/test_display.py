@@ -1,6 +1,7 @@
 """Boundary and lifecycle tests using Lua, not a reimplementation of the model."""
 import json
 import unittest
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from lupa import LuaRuntime
 
@@ -14,6 +15,29 @@ def lua_value(lua, value):
 
 
 class DisplayTest(unittest.TestCase):
+    def test_reset_dates_use_local_calendar_week(self):
+        zone=timezone(timedelta(hours=8))
+        def stamp(s): return int(datetime.fromisoformat(s).replace(tzinfo=zone).timestamp())
+        now=stamp("2026-10-26T15:00:00")
+        for target,expected in (
+            ("2026-10-26T21:00:00","21:00重置"),
+            ("2026-10-29T21:00:00","周四21:00重置"),
+            ("2026-11-01T23:59:00","周日23:59重置"),
+            ("2026-11-02T00:00:00","11/02 00:00重置"),
+            ("2026-10-25T23:59:00","10/25 23:59重置"),
+            ("2027-01-01T08:05:00","2027/01/01 08:05重置")):
+            with self.subTest(target=target):
+                self.assertEqual(self.model.reset_date(stamp(target),now,480),expected)
+        self.assertEqual(self.model.reset_date(stamp("2026-11-02T00:00:00"),stamp("2026-11-01T23:59:00"),480),"11/02 00:00重置")
+        self.assertEqual(self.model.reset_date(stamp("2026-11-02T00:00:00"),stamp("2026-11-02T00:00:00"),480),"00:00重置")
+
+    def test_reset_dates_leap_year_missing_clock_and_timezone(self):
+        def stamp(s): return int(datetime.fromisoformat(s).replace(tzinfo=timezone.utc).timestamp())
+        self.assertEqual(self.model.reset_date(stamp("2028-02-29T13:00:00"),stamp("2028-02-01T00:00:00"),480),"02/29 21:00重置")
+        self.assertEqual(self.model.reset_date(stamp("2026-10-29T13:00:00"),None,480),"10/29 21:00重置")
+        self.assertEqual(self.model.reset_date(stamp("2026-10-29T13:00:00"),stamp("2026-10-26T00:00:00"),0),"周四13:00重置")
+        self.assertEqual(self.model.reset_date(None,stamp("2026-10-26T00:00:00"),480),"")
+
     def setUp(self):
         self.lua=LuaRuntime(unpack_returned_tuples=True)
         self.model=self.lua.execute((ROOT/"package/display_model.lua").read_text())
@@ -91,7 +115,7 @@ class DisplayTest(unittest.TestCase):
         lua.execute('''
         labels={}; requests={}; writes={}; timers={}; nodes={}; node_id=1; cleans=0; mutations={}; images=0; mono=0; styles={}; long_modes={}; positions={}; sizes={}
         LV_PART_MAIN=0; LV_OBJ_FLAG_SCROLLABLE=1; LV_TEXT_ALIGN_LEFT=0; LV_TEXT_ALIGN_RIGHT=1; LV_TEXT_ALIGN_CENTER=2
-        LV_LABEL_LONG_WRAP=0; LV_LABEL_LONG_SCROLL=1; LV_LABEL_LONG_DOT=2; LV_GRAD_DIR_VER=1
+        LV_LABEL_LONG_WRAP=0; LV_LABEL_LONG_SCROLL=1; LV_LABEL_LONG_DOT=2; LV_LABEL_LONG_CLIP=3; LV_GRAD_DIR_VER=1
         LV_FONT_MONTSERRAT_12=12; LV_FONT_MONTSERRAT_16=16; LV_FONT_MONTSERRAT_20=20; LV_FONT_MONTSERRAT_28=28
         dofile=function() return PY_MODEL end
         file={stat=function() return {} end,
@@ -215,7 +239,7 @@ class DisplayTest(unittest.TestCase):
                 self.assertLessEqual(pos.y+size.height,panel.height)
         g.key.callback(g.key.UP,g.key.SHORT)
         self.assertIn("50%",list(g.labels.values()))
-        self.assertIn("本期 100%",list(g.labels.values()))
+        self.assertIn("本期 100% 周五17:00重置",list(g.labels.values()))
 
     def test_all_subscription_pages_reachable_without_messages(self):
         self.fixture["subscriptions"]=self.dynamic_subscriptions(13)
@@ -399,10 +423,42 @@ class DisplayTest(unittest.TestCase):
         self.assertEqual(chunks[1],data.messages[1].text)
         for value in ("中"*180,"a"*180,"第一行\n"*20):
             for chunk in self.model.message_chunks(value).values():
-                self.assertLessEqual(len(chunk.split("\n")),7)
-                self.assertTrue(all(len(line)<=12 for line in chunk.split("\n")))
+                self.assertLessEqual(len(chunk.split("\n")),5)
+                self.assertTrue(all(sum(self.model.message_char_width(c) for c in line)<=264 for line in chunk.split("\n")))
         g=self.boot();g.requests[1](200,"valid");g.key.callback(g.key.RIGHT,g.key.SHORT)
         self.assertIn("第一行\n第二行\n\n第四行",list(g.labels.values()))
+
+    def test_message_wrap_keeps_words_and_long_tokens(self):
+        text="记得 review the deployment checklist before Friday. 请带 MacBook 开会。"
+        chunks=list(self.model.message_chunks(text).values())
+        lines="\n".join(chunks)
+        for word in ("review", "deployment", "checklist", "before", "Friday.", "MacBook"):
+            self.assertIn(word,lines)
+        self.assertEqual("".join(lines.split()),"".join(text.split()))
+        for line in lines.split("\n"):
+            self.assertFalse(line.startswith(" "))
+            self.assertLessEqual(sum(self.model.message_char_width(c) for c in line),264)
+        value="https://example.com/"+"abcdefghij"*18
+        pages=list(self.model.message_chunks(value).values())
+        self.assertEqual("".join(pages).replace("\n",""),value)
+
+    def test_note_paper_alternates_and_pagination_keeps_color(self):
+        self.fixture["messages"]=[{"id":"yellow","text":"中"*180},{"id":"green","text":"Review the deployment checklist"},
+            {"id":"red","text":"第三条"},{"id":"blue","text":"第四条"},{"id":"repeat","text":"第五条"}]
+        g=self.boot();g.requests[1](200,"valid");g.key.callback(g.key.RIGHT,g.key.SHORT)
+        def paper():
+            return [s.bg_color for s in g.styles.values() if s.bg_color in (0xFFF2A6,0xDDEEB4,0xF7B6B2,0xB9DFF2)]
+        self.assertEqual(paper(),[0xFFF2A6])
+        g.key.callback(g.key.UP,g.key.SHORT)
+        self.assertEqual(g.XIAOBUCUBIC.state.message_part,2)
+        self.assertEqual(paper(),[0xFFF2A6])
+        g.key.callback(g.key.UP,g.key.SHORT);g.key.callback(g.key.UP,g.key.SHORT)
+        self.assertEqual(g.XIAOBUCUBIC.state.message,2)
+        self.assertEqual(paper(),[0xDDEEB4])
+        for color,header in ((0xF7B6B2,0xDE8580),(0xB9DFF2,0x83BBD7),(0xFFF2A6,0xE2CA65)):
+            g.key.callback(g.key.UP,g.key.SHORT)
+            self.assertEqual(paper(),[color])
+            self.assertTrue(any(style.bg_color==header for style in g.styles.values()))
 
     def test_poll_only_updates_changed_quota_and_keeps_background(self):
         self.fixture["messages"]=[]
@@ -448,9 +504,10 @@ class DisplayTest(unittest.TestCase):
 
     def test_claude_companion_window_and_incremental_updates(self):
         self.use_extended_fixture()
+        self.fixture["subscriptions"][0]["windows"][1]["reset_at"]=self.fixture["generated_at"]+3*86400-3600
         g=self.boot();g.requests[1](200,"valid")
-        self.assertIn("7天 83%",list(g.labels.values()))
-        for text in ("5小时 · 1小时后重置","7天 83%"):
+        self.assertIn("83% 周日17:23重置",list(g.labels.values()))
+        for text in ("5小时 19:49重置","83% 周日17:23重置"):
             label=next(i for i,v in g.labels.items() if v==text)
             self.assertEqual(g.long_modes[label],g.LV_LABEL_LONG_DOT)
         self.assertIsNone(self.model.companion_window(g.XIAOBUCUBIC.state.snapshot.subscriptions[2],1))
@@ -458,23 +515,23 @@ class DisplayTest(unittest.TestCase):
         self.fixture["subscriptions"][0]["windows"][1]["used_percent"]=81
         g.PY_DOC=lua_value(self.lua,self.fixture)
         g.XIAOBUCUBIC.refresh(True);g.requests[2](200,"valid")
-        label=next(i for i,v in g.labels.items() if v=="7天 19%")
+        label=next(i for i,v in g.labels.items() if v=="19% 周日17:23重置")
         self.assertEqual(g.styles[label].text_color,0xFFD166)
         self.assertEqual((g.cleans,g.node_id),(cleans,nodes))
         g.key.callback(g.key.UP,g.key.SHORT)
         self.assertIn("19%",list(g.labels.values()))
-        self.assertIn("5小时 60%",list(g.labels.values()))
+        self.assertIn("5小时 60% 19:49重置",list(g.labels.values()))
         self.fixture["subscriptions"][0]["windows"]=self.fixture["subscriptions"][0]["windows"][:1]
         g.PY_DOC=lua_value(self.lua,self.fixture);g.requests[3](200,"valid")
-        self.assertNotIn("5小时 60%",list(g.labels.values()))
-        self.assertNotIn("7天 19%",list(g.labels.values()))
+        self.assertNotIn("5小时 60% 19:49重置",list(g.labels.values()))
+        self.assertNotIn("19% 周日17:23重置",list(g.labels.values()))
         self.assertIn("60%",list(g.labels.values()))
 
     def test_companion_unknown_zero_and_expired(self):
         self.use_extended_fixture()
         self.fixture["subscriptions"][0]["windows"][1].update(label="本期",used_percent=None)
         g=self.boot();g.requests[1](200,"valid")
-        self.assertIn("本期 --",list(g.labels.values()))
+        self.assertIn("本期 -- 19:59重置",list(g.labels.values()))
         self.fixture["subscriptions"][0]["windows"][1].update(used_percent=100,reset_at=self.fixture["generated_at"]-1)
         g.PY_DOC=lua_value(self.lua,self.fixture)
         g.XIAOBUCUBIC.refresh(True);g.requests[2](200,"valid")

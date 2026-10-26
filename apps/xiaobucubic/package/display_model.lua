@@ -165,6 +165,47 @@ function M.remaining(window)
   return math.floor(math.max(0,100-window.used_percent))
 end
 
+function M.window_label(window)
+  if not window then return "暂无用量" end
+  return window.label=="7天" and "周限" or window.label
+end
+
+local function calendar_day(day)
+  -- Gregorian civil date from Unix days; independent of firmware RTC/timezone APIs.
+  local z=day+719468
+  local era=math.floor(z/146097)
+  local doe=z-era*146097
+  local yoe=math.floor((doe-math.floor(doe/1460)+math.floor(doe/36524)-math.floor(doe/146096))/365)
+  local year=yoe+era*400
+  local doy=doe-(365*yoe+math.floor(yoe/4)-math.floor(yoe/100))
+  local mp=math.floor((5*doy+2)/153)
+  local date=doy-math.floor((153*mp+2)/5)+1
+  local month=mp+(mp<10 and 3 or -9)
+  if month<=2 then year=year+1 end
+  return year,month,date
+end
+
+function M.reset_date(timestamp, now, offset_minutes)
+  if not epoch(timestamp) then return "" end
+  local offset=(number(offset_minutes,-720,840) or 480)*60
+  local local_seconds=timestamp+offset
+  local day=math.floor(local_seconds/86400)
+  local hour=math.floor(local_seconds%86400/3600)
+  local minute=math.floor(local_seconds%3600/60)
+  local today=epoch(now) and math.floor((now+offset)/86400) or nil
+  local date
+  if today and day==today then
+    date=""
+  elseif today and day>=today-(today+3)%7 and day<today-(today+3)%7+7 then
+    date="周"..({"一","二","三","四","五","六","日"})[(day+3)%7+1]
+  else
+    local year,month,d=calendar_day(day)
+    local current_year=today and calendar_day(today)
+    date=(current_year and current_year~=year and string.format("%d/",year) or "")..string.format("%02d/%02d ",month,d)
+  end
+  return date..string.format("%02d:%02d重置",hour,minute)
+end
+
 function M.format_bytes(bytes)
   if not number(bytes,0,9007199254740991) then return "--" end
   local units={"B","KiB","MiB","GiB","TiB","PiB"}
@@ -182,23 +223,51 @@ function M.quota_level(remaining)
   return "normal"
 end
 
+-- Conservative advances for the bundled 22px Noto font. CJK stays full-width;
+-- Latin words are measured as a unit before deciding where to wrap.
+function M.message_char_width(char)
+  if char==" " or char=="\t" then return 6 end
+  if #char>1 then return 22 end
+  if char:match("[ilI!.,:;'|`]") then return 7 end
+  if char:match("[MW@%%]") then return 22 end
+  if char:match("[A-Z]") then return 16 end
+  if char:match("[mw]") then return 19 end
+  return 13
+end
+
 function M.message_chunks(value, max_width, max_lines, measure)
-  -- Default units are 22px, deliberately conservative for the bundled 22px font.
-  max_width=max_width or 264;max_lines=max_lines or 7
-  measure=measure or function() return 22 end
+  max_width=max_width or 264;max_lines=max_lines or 5
+  measure=measure or M.message_char_width
   local parts,lines,current,width={}, {},{},0
+  local word,space={},false
   local function line()
     lines[#lines+1]=table.concat(current);current={};width=0
     if #lines==max_lines then parts[#parts+1]=table.concat(lines,"\n");lines={} end
   end
-  for char in (value or ""):gmatch("[%z\1-\127\194-\244][\128-\191]*") do
-    if char=="\n" then line()
-    else
-      local size=measure(char)
-      if width+size>max_width and #current>0 then line() end
-      current[#current+1]=char;width=width+size
+  local function token(chars)
+    local size=0
+    for _,char in ipairs(chars) do size=size+measure(char) end
+    local gap=space and #current>0 and measure(" ") or 0
+    if #current>0 and width+gap+size>max_width then line();gap=0 end
+    if gap>0 then current[#current+1]=" ";width=width+gap end
+    space=false
+    -- Only a token wider than a whole line may be split (e.g. a long URL).
+    for _,char in ipairs(chars) do
+      local advance=measure(char)
+      if #current>0 and width+advance>max_width then line() end
+      current[#current+1]=char;width=width+advance
     end
   end
+  local function flush()
+    if #word>0 then token(word);word={} end
+  end
+  for char in (value or ""):gmatch("[%z\1-\127\194-\244][\128-\191]*") do
+    if char=="\n" then flush();line();space=false
+    elseif char==" " or char=="\t" or char=="\r" then flush();space=true
+    elseif #char==1 then word[#word+1]=char
+    else flush();token({char}) end
+  end
+  flush()
   if #current>0 then line() end
   if #lines>0 then parts[#parts+1]=table.concat(lines,"\n") end
   if #parts==0 then parts[1]="" end

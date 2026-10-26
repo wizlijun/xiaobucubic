@@ -4,7 +4,13 @@ local model=dofile(BASE.."display_model.lua")
 local codec=sjson or json
 local C={bg=0x070C12,panel=0x111C28,line=0x203142,text=0xF0F5FC,muted=0x8497AC,
   mint=0x6DE1C2,blue=0x83B6FF,amber=0xFFC078,yellow=0xFFD166,red=0xFF5F6D}
-local cfg={api_url="",read_token="",refresh_seconds=60,rotate_seconds=15,auto_rotate=true}
+local NOTE_COLORS={
+  {paper=0xFFF2A6,header=0xE2CA65}, -- yellow
+  {paper=0xDDEEB4,header=0xAEC87C}, -- green
+  {paper=0xF7B6B2,header=0xDE8580}, -- coral red
+  {paper=0xB9DFF2,header=0x83BBD7}, -- sky blue
+}
+local cfg={api_url="",read_token="",refresh_seconds=60,rotate_seconds=15,auto_rotate=true,utc_offset_minutes=480}
 local state={alive=true,busy=false,tick=0,page=1,quota_page=1,window=1,message=1,message_part=1,last_fetch=-10000,request_id=0,
   last_received=nil,rotate_at=15,connection="等待配置",snapshot=nil,error=nil,failures=0}
 local fonts={}
@@ -25,6 +31,7 @@ cfg.read_token=model.text(loaded.read_token,"",512)
 cfg.refresh_seconds=model.number(loaded.refresh_seconds,15,3600) or 60
 cfg.rotate_seconds=model.number(loaded.rotate_seconds,8,120) or 15
 cfg.auto_rotate=loaded.auto_rotate~=false
+cfg.utc_offset_minutes=model.number(loaded.utc_offset_minutes,-720,840) or 480
 state.rotate_at=cfg.rotate_seconds
 local cached=read_json(BASE.."cache.json")
 if cached then state.snapshot=model.normalize(cached);state.connection="离线缓存" end
@@ -132,14 +139,8 @@ local function sync_messages()
   if #messages==0 then state.page=1 end
   return messages
 end
-local function countdown(t)
-  local n=now()
-  if not t or not n then return "" end
-  local s=math.max(0,t-n)
-  if s==0 then return "待刷新" end
-  if s>=86400 then return math.ceil(s/86400).."天后重置" end
-  if s>=3600 then return math.floor(s/3600).."小时后重置" end
-  return math.max(1,math.ceil(s/60)).."分钟后重置"
+local function reset_date(t)
+  return model.reset_date(t,now(),cfg.utc_offset_minutes)
 end
 local function num(v,suffix)
   if type(v)~="number" then return "--" end
@@ -160,9 +161,10 @@ local function network_indicator()
   if state.error=="接口鉴权失败" then badge="鉴权失败"
   elseif state.error=="请求超时" then badge="超时" end
   local color=state.error and C.amber or state.connection=="已同步" and C.mint or C.muted
+  if state.page==2 then color=state.error and 0x823B20 or 0x38432B end
   box("network.dot",root,245,10,4,4,color,2)
   label("network.text",root,253,5,55,17,badge,small,color,LV_TEXT_ALIGN_RIGHT)
-  label("network.demo",root,253,23,55,14,state.snapshot and state.snapshot.demo and "演示" or "",small,C.amber,LV_TEXT_ALIGN_RIGHT)
+  label("network.demo",root,253,23,55,14,state.snapshot and state.snapshot.demo and "演示" or "",small,state.page==2 and 0x823B20 or C.amber,LV_TEXT_ALIGN_RIGHT)
 end
 local function weather_background()
   local asset=model.weather_asset(state.snapshot and state.snapshot.weather)
@@ -245,16 +247,16 @@ local function draw_subscriptions()
     label(id..".name",panel,grid and 6 or 10,top,value_x-(grid and 10 or 16),20,p.name,medium,C.text,LV_TEXT_ALIGN_LEFT,clip)
     label(id..".value",panel,value_x,top,value_width,20,
       not grid and balance or value and num(value,"%") or "--",medium,tone,LV_TEXT_ALIGN_RIGHT,clip)
-    local detail=w and w.label or "暂无用量"
+    local detail=model.window_label(w)
     -- With two windows, omit the redundant official-source label so the
     -- window and reset time fit without a moving marquee. Keep non-official sources.
     if balance then detail=detail.." · "..(value and num(value,"%") or "--")
     elseif (not companion and not grid and height>=45) or p.source~="official" then detail=detail.." · "..source_names[p.source] end
     if status=="stale" then detail=detail.." · 已过期"
     elseif status=="expired" then detail=detail.." · 待刷新"
-    elseif w and w.reset_at then detail=detail.." · "..countdown(w.reset_at) end
+    elseif w and w.reset_at then detail=detail.." "..reset_date(w.reset_at) end
     local detail_y=(height<45 or grid) and 21 or 28
-    label(id..".detail",panel,grid and 6 or 10,detail_y,grid and width-12 or companion and 160 or width-20,
+    label(id..".detail",panel,grid and 6 or 10,detail_y,grid and width-12 or companion and 120 or width-20,
       (height<45 or grid) and 13 or 15,grid and balance or detail,small,C.muted,LV_TEXT_ALIGN_LEFT,clip)
     if grid and balance and not companion then
       label(id..".reset",panel,6,35,width-12,13,detail,small,C.muted,LV_TEXT_ALIGN_LEFT,clip)
@@ -265,11 +267,17 @@ local function draw_subscriptions()
       local secondary_level=model.quota_level(secondary_value)
       local secondary_tone=secondary_level=="critical" and C.red or secondary_level=="low" and C.yellow or
         secondary_status=="ok" and accent or C.muted
-      local summary=companion.label.." "..(secondary_value and num(secondary_value,"%") or "--")
+      local summary=(companion.label=="7天" and "" or model.window_label(companion).." ")..
+        (secondary_value and num(secondary_value,"%") or "--")
       if secondary_status=="stale" then summary=summary.." · 已过期"
-      elseif secondary_status=="expired" then summary=summary.." · 待刷新" end
-      label(id..".secondary.label",panel,grid and 6 or width-118,grid and 35 or detail_y,
-        grid and width-12 or 106,(height<45 or grid) and 13 or 15,summary,small,secondary_tone,LV_TEXT_ALIGN_RIGHT,clip)
+      elseif secondary_status=="expired" then summary=summary.." · 待刷新"
+      elseif companion.reset_at then
+        local reset=reset_date(companion.reset_at)
+        if reset~="" then summary=summary.." "..reset end
+      end
+      label(id..".secondary.label",panel,grid and 6 or width-164,grid and 35 or detail_y,
+        grid and width-12 or 152,(height<45 or grid) and 13 or 15,summary,small,secondary_tone,LV_TEXT_ALIGN_RIGHT,
+        grid and LV_LABEL_LONG_SCROLL or clip)
       -- A narrow inset rail blends into the bottom of the main quota fill.
       local rail_y,rail_height=height-3,2
       if not grid and height>=45 then rail_y=height-6;rail_height=4 end
@@ -285,23 +293,31 @@ local function draw_subscriptions()
 end
 local function draw_reminder(messages)
   local r=messages[state.message]
-  label("message.count",root,12,7,225,20,"消息 · "..state.message.." / "..#messages,small,C.muted)
   if not r then return end
-  local accent=r.priority=="high" and C.amber or C.mint
-  box("message.accent",root,12,34,3,198,accent,1)
-  -- Title-free reminders leave room for seven lines of large body text.
+  -- Alternate paper colors per note; all pages of a note keep the same color.
+  local palette=NOTE_COLORS[(state.message-1)%#NOTE_COLORS+1]
+  local paper=palette.paper
+  local ink,muted=0x30382D,0x626B50
+  local header=palette.header
+  box("message.header",root,0,0,320,29,header,0)
+  label("message.count",root,14,6,225,20,"便签 · "..state.message.." / "..#messages,small,ink)
+  local sheet=box("message.paper",root,0,29,320,211,paper,0)
   local chunks=model.message_chunks(r.text)
   state.message_part=math.min(state.message_part,#chunks)
-  local body=label("message.body",root,25,44,278,194,chunks[state.message_part],message_font,C.text)
-  style(body,"text_line_space",2)
+  local body=label("message.body",sheet,22,14,276,158,chunks[state.message_part],message_font,ink,
+    LV_TEXT_ALIGN_LEFT,LV_LABEL_LONG_CLIP)
+  style(body,"text_line_space",4)
   local due=""
   if r.due_at and now() then
     local mins=math.ceil((r.due_at-now())/60)
     due=mins<=0 and "已到提醒时间" or mins<60 and (mins.."分钟后") or (math.ceil(mins/60).."小时后")
   end
-  label("message.meta",root,25,26,283,17,(r.sender=="bot" and "Bot · " or "")..
-    (r.priority=="high" and "重要" or "备忘")..(due~="" and " · "..due or "")..
-    (#chunks>1 and (" · "..state.message_part.."/"..#chunks) or ""),small,accent)
+  label("message.meta",sheet,22,184,226,17,(r.sender=="bot" and "Bot · " or "")..
+    (r.priority=="high" and "重要" or "备忘")..(due~="" and " · "..due or ""),small,muted,
+    LV_TEXT_ALIGN_LEFT,LV_LABEL_LONG_CLIP)
+  label("message.part",sheet,252,184,46,17,
+    #chunks>1 and (state.message_part.."/"..#chunks) or "",small,muted,LV_TEXT_ALIGN_RIGHT)
+
 end
 local function render()
   if not state.alive then return end
