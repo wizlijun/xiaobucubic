@@ -108,8 +108,9 @@ class DisplayTest(unittest.TestCase):
         self.fixture["weather"].update(condition="晴",is_day=False)
         self.assertEqual(self.model.weather_asset(self.normalize(self.fixture).weather),"clear_night")
 
-    def boot(self, wifi=False):
+    def boot(self, wifi=False, transport="wifi"):
         lua=self.lua
+        lua.globals().PY_TRANSPORT=transport
         lua.globals().PY_MODEL=self.model
         lua.globals().PY_DOC=lua_value(lua,self.fixture)
         lua.execute('''
@@ -117,12 +118,12 @@ class DisplayTest(unittest.TestCase):
         LV_PART_MAIN=0; LV_OBJ_FLAG_SCROLLABLE=1; LV_TEXT_ALIGN_LEFT=0; LV_TEXT_ALIGN_RIGHT=1; LV_TEXT_ALIGN_CENTER=2
         LV_LABEL_LONG_WRAP=0; LV_LABEL_LONG_SCROLL=1; LV_LABEL_LONG_DOT=2; LV_LABEL_LONG_CLIP=3; LV_GRAD_DIR_VER=1
         LV_FONT_MONTSERRAT_12=12; LV_FONT_MONTSERRAT_16=16; LV_FONT_MONTSERRAT_20=20; LV_FONT_MONTSERRAT_28=28
-        dofile=function() return PY_MODEL end
+        dofile=function(path) if path:find("usb_transport") then return PY_USB_MODULE end;return PY_MODEL end
         file={stat=function() return {} end,
           getcontents=function(path) if path:find('config.json') then return 'config' end end,
           putcontents=function(path,body) writes[#writes+1]={path,body}; return true end}
         sjson={decode=function(body)
-          if body=='config' then return {api_url='http://localhost/v1/display'} end
+          if body=='config' then return {api_url='http://localhost/v1/display',transport=PY_TRANSPORT,wifi_fallback_ssid='ap24'} end
           if body=='valid' then return PY_DOC end
           error('Invalid JSON')
         end,encode=function(doc) return 'cache' end}
@@ -163,8 +164,86 @@ class DisplayTest(unittest.TestCase):
             wifi={sta={getip=function() return wifi_ip end,
                 connect=function() wifi_attempts[#wifi_attempts+1]=XIAOBUCUBIC.state.tick end}}
             """)
+        if transport in ("usb","auto"):
+            lua.execute("""
+            modes={};saved_ssid=PY_TRANSPORT=='auto' and 'ap24' or 'ONES-2.4G';radio_stops=0;connects=0;wifi_ip=nil;starts=0
+            uart={setup=function() end,on=function() end,write=function() end}
+            wifi={STATION=1,NULLMODE=0,start=function() starts=starts+1 end,stop=function() radio_stops=radio_stops+1 end,
+              mode=function(value,save) modes[#modes+1]=value end,getmode=function() return modes[#modes] end,
+              sta={config=function(value,save) assert(save);saved_ssid=value.ssid end,
+                getconfig=function() return {ssid=saved_ssid} end,getip=function() return wifi_ip end,
+                connect=function() connects=connects+1 end}}
+            PY_USB_MODULE={start=function(options) usb_options=options;return {stop=function() end} end}
+            """)
         lua.execute((ROOT/"package/main.lua").read_text())
         return lua.globals()
+
+    def test_usb_mode_erases_wifi_and_never_reconnects(self):
+        self.fixture["messages"]=[]
+        g=self.boot(transport="usb")
+        self.assertEqual(g.saved_ssid,"")
+        self.assertEqual(g.modes[len(g.modes)],0)
+        self.assertEqual(len(g.requests),0)
+        self.assertTrue(g.usb_options.accept("valid"))
+        self.assertEqual(g.XIAOBUCUBIC.state.connection,"已同步")
+        self.assertIn("USB",list(g.labels.values()))
+        for _ in range(145):g.timers[1].callback()
+        self.assertEqual(g.XIAOBUCUBIC.state.connection,"离线缓存")
+        self.assertEqual(len(g.requests),0)
+        self.assertEqual(g.connects,0)
+        self.assertEqual(g.usb_options.status().transport,"usb")
+
+    def test_auto_fallback_and_usb_recovery_preserve_credentials(self):
+        self.fixture["messages"]=[]
+        g=self.boot(transport="auto")
+        self.assertEqual(g.saved_ssid,"ap24")
+        self.assertEqual(g.modes[len(g.modes)],0)
+        for _ in range(19):g.timers[1].callback()
+        self.assertEqual(g.starts,0)
+        g.timers[1].callback()
+        self.assertEqual(g.XIAOBUCUBIC.state.active_transport,"wifi")
+        self.assertEqual(g.starts,1)
+        g.wifi_ip="192.168.1.100";g.timers[1].callback()
+        g.requests[len(g.requests)](200,"valid")
+        self.assertEqual(g.XIAOBUCUBIC.state.last_source,"wifi")
+        self.assertIn("Wi-Fi ap24",list(g.labels.values()))
+        g.XIAOBUCUBIC.refresh(True);late=g.requests[len(g.requests)]
+        self.assertTrue(g.usb_options.accept("valid"))
+        self.assertEqual(g.XIAOBUCUBIC.state.active_transport,"usb")
+        self.assertEqual(g.modes[len(g.modes)],0)
+        self.assertEqual(g.saved_ssid,"ap24")
+        late(500,"")
+        self.assertEqual(g.XIAOBUCUBIC.state.connection,"已同步")
+        count=len(g.requests)
+        for _ in range(89):g.timers[1].callback()
+        self.assertEqual(g.XIAOBUCUBIC.state.active_transport,"usb")
+        self.assertEqual(len(g.requests),count)
+        g.timers[1].callback()
+        self.assertEqual(g.XIAOBUCUBIC.state.active_transport,"wifi")
+        self.assertEqual(g.saved_ssid,"ap24")
+
+    def test_auto_upstream_failure_and_wrong_ssid(self):
+        g=self.boot(transport="auto")
+        g.usb_options.accept("valid")
+        g.usb_options.upstream_unavailable()
+        self.assertEqual(g.XIAOBUCUBIC.state.active_transport,"wifi")
+        g.usb_options.accept("valid")
+        g.saved_ssid="unapproved-network"
+        count=g.connects
+        g.usb_options.upstream_unavailable()
+        self.assertEqual(g.XIAOBUCUBIC.state.active_transport,"usb")
+        self.assertEqual(g.connects,count)
+
+    def test_usb_configuration_saves_wifi_and_enables_auto_without_http(self):
+        g=self.boot(transport="usb")
+        g.usb_options.configure_wifi("ap24","test-only-secret")
+        self.assertEqual(g.saved_ssid,"ap24")
+        self.assertEqual(g.usb_options.status().transport,"auto")
+        self.assertEqual(g.usb_options.status().active_transport,"usb")
+        self.assertEqual(g.modes[len(g.modes)],0)
+        self.assertEqual(len(g.requests),0)
+        for _ in range(20):g.timers[1].callback()
+        self.assertEqual(g.XIAOBUCUBIC.state.active_transport,"wifi")
 
     def dynamic_subscriptions(self, count):
         now=self.fixture["generated_at"]
@@ -238,8 +317,8 @@ class DisplayTest(unittest.TestCase):
                 self.assertLessEqual(pos.x+size.width,panel.width)
                 self.assertLessEqual(pos.y+size.height,panel.height)
         g.key.callback(g.key.UP,g.key.SHORT)
-        self.assertIn("50%",list(g.labels.values()))
-        self.assertIn("本期 100% 周五17:00重置",list(g.labels.values()))
+        self.assertIn("100%",list(g.labels.values()))
+        self.assertIn("年额度 50%",list(g.labels.values()))
 
     def test_all_subscription_pages_reachable_without_messages(self):
         self.fixture["subscriptions"]=self.dynamic_subscriptions(13)
@@ -326,7 +405,7 @@ class DisplayTest(unittest.TestCase):
             g.XIAOBUCUBIC.render()
             self.assertIn("演示",list(g.labels.values()))
             self.assertNotIn("xiaobucubic",list(g.labels.values()))
-            self.assertIn("在线",list(g.labels.values()))
+            self.assertIn("Wi-Fi ap24",list(g.labels.values()))
         g.key.callback(g.key.RIGHT,g.key.SHORT)
         self.assertEqual(g.XIAOBUCUBIC.state.page,1)
 
@@ -380,7 +459,8 @@ class DisplayTest(unittest.TestCase):
         g=self.boot();g.requests[1](200,"valid")
         self.assertIn("66%",list(g.labels.values()))
         g.key.callback(g.key.UP,g.key.SHORT)
-        self.assertIn("83%",list(g.labels.values()))
+        self.assertIn("66%",list(g.labels.values()))
+        self.assertIn("83% 19:59重置",list(g.labels.values()))
         self.assertIn("75%",list(g.labels.values()))
         self.fixture["subscriptions"]=self.fixture["subscriptions"][1:]
         self.fixture["subscriptions"][0]["windows"][0].update(used_percent=99.6,label="123分钟")
@@ -525,13 +605,34 @@ class DisplayTest(unittest.TestCase):
         self.assertEqual(g.styles[label].text_color,0xFFD166)
         self.assertEqual((g.cleans,g.node_id),(cleans,nodes))
         g.key.callback(g.key.UP,g.key.SHORT)
-        self.assertIn("19%",list(g.labels.values()))
-        self.assertIn("5小时 60% 19:49重置",list(g.labels.values()))
+        self.assertIn("60%",list(g.labels.values()))
+        self.assertIn("19% 周日17:23重置",list(g.labels.values()))
+        self.assertIn("5小时 19:49重置",list(g.labels.values()))
+        self.assertEqual(g.XIAOBUCUBIC.state.window,1)
         self.fixture["subscriptions"][0]["windows"]=self.fixture["subscriptions"][0]["windows"][:1]
         g.PY_DOC=lua_value(self.lua,self.fixture);g.requests[3](200,"valid")
         self.assertNotIn("5小时 60% 19:49重置",list(g.labels.values()))
         self.assertNotIn("19% 周日17:23重置",list(g.labels.values()))
         self.assertIn("60%",list(g.labels.values()))
+
+    def test_refresh_keeps_claude_five_hour_primary_and_weekly_secondary(self):
+        self.use_extended_fixture()
+        self.fixture["messages"]=[]
+        self.fixture["subscriptions"][0]["windows"][0]["used_percent"]=2
+        self.fixture["subscriptions"][0]["windows"][1]["used_percent"]=63
+        g=self.boot();g.requests[1](200,"valid")
+        primary=next(i for i,text in g.labels.items() if text=="98%")
+        parent=g.nodes[primary]
+        fill=next(i for i,p in g.nodes.items() if p==parent and g.styles[i].bg_opa==64)
+        width=g.sizes[fill].width
+        for _ in range(3):
+            g.key.callback(g.key.UP,g.key.SHORT)
+            g.requests[len(g.requests)](200,"valid")
+            self.assertEqual(g.labels[primary],"98%")
+            self.assertEqual(g.sizes[fill].width,width)
+            self.assertIn("5小时 19:49重置",list(g.labels.values()))
+            self.assertIn("37% 19:59重置",list(g.labels.values()))
+            self.assertNotIn("37%",list(g.labels.values()))
 
     def test_companion_unknown_zero_and_expired(self):
         self.use_extended_fixture()

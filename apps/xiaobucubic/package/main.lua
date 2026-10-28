@@ -13,6 +13,7 @@ local NOTE_COLORS={
 local cfg={api_url="",read_token="",refresh_seconds=60,rotate_seconds=15,auto_rotate=true,utc_offset_minutes=480}
 local state={alive=true,busy=false,tick=0,page=1,quota_page=1,window=1,message=1,last_fetch=-10000,request_id=0,
   last_received=nil,rotate_at=15,connection="等待配置",snapshot=nil,error=nil,failures=0}
+local usb
 local fonts={}
 local ui={nodes={},props={}}
 
@@ -32,6 +33,10 @@ cfg.refresh_seconds=model.number(loaded.refresh_seconds,15,3600) or 60
 cfg.rotate_seconds=model.number(loaded.rotate_seconds,8,120) or 15
 cfg.auto_rotate=loaded.auto_rotate~=false
 cfg.utc_offset_minutes=model.number(loaded.utc_offset_minutes,-720,840) or 480
+cfg.transport=loaded.transport=="auto" and "auto" or loaded.transport=="usb" and "usb" or "wifi"
+cfg.wifi_fallback_ssid=model.text(loaded.wifi_fallback_ssid,"",64)
+cfg.usb_timeout_seconds=model.number(loaded.usb_timeout_seconds,30,600) or math.max(90,cfg.refresh_seconds+30)
+state.active_transport=cfg.transport=="wifi" and "wifi" or "usb"
 state.rotate_at=cfg.rotate_seconds
 local cached=read_json(BASE.."cache.json")
 if cached then state.snapshot=model.normalize(cached);state.connection="离线缓存" end
@@ -157,12 +162,23 @@ end
 local function network_indicator()
   local badge=state.busy and "同步中" or state.connection=="已同步" and "在线" or
     state.connection=="离线缓存" and "离线" or state.connection=="待配置" and "待配置" or "未连接"
+  if state.active_transport=="usb" then badge=state.connection=="已同步" and "USB" or "USB离线"
+  elseif state.connection=="已同步" then
+    local ssid=cfg.wifi_fallback_ssid
+    if wifi and wifi.sta and wifi.sta.getconfig then
+      local ok,saved=pcall(wifi.sta.getconfig)
+      if ok and type(saved)=="table" then ssid=model.text(saved.ssid,ssid,32) end
+    end
+    badge=ssid~="" and ("Wi-Fi "..ssid) or "Wi-Fi"
+  end
   if state.error=="接口鉴权失败" then badge="鉴权失败"
   elseif state.error=="请求超时" then badge="超时" end
   local color=state.error and C.amber or state.connection=="已同步" and C.mint or C.muted
   if state.page==2 then color=state.error and 0x823B20 or 0x38432B end
-  box("network.dot",root,245,10,4,4,color,2)
-  label("network.text",root,253,5,55,17,badge,small,color,LV_TEXT_ALIGN_RIGHT)
+  local show_ap=badge:sub(1,6)=="Wi-Fi "
+  box("network.dot",root,show_ap and 220 or 245,10,4,4,color,2)
+  label("network.text",root,show_ap and 228 or 253,5,show_ap and 80 or 55,17,badge,small,color,
+    LV_TEXT_ALIGN_RIGHT,LV_LABEL_LONG_DOT or LV_LABEL_LONG_CLIP or LV_LABEL_LONG_WRAP)
   label("network.demo",root,253,23,55,14,state.snapshot and state.snapshot.demo and "演示" or "",small,state.page==2 and 0x823B20 or C.amber,LV_TEXT_ALIGN_RIGHT)
 end
 local function weather_background()
@@ -203,7 +219,8 @@ local function weather_inline()
 end
 local function draw_subscriptions()
   weather_background();weather_inline()
-  if not model.has_secondary(state.snapshot) then state.window=1 end
+  -- Keep the server-defined primary/secondary roles stable across refreshes and keys.
+  state.window=1
   local data=state.snapshot
   if not data or #data.subscriptions==0 then
     label("quota.empty.title",root,18,113,284,26,"等待额度数据",medium,C.text)
@@ -340,7 +357,28 @@ local function wifi_connected()
   if not ok then return nil end -- Firmware without a usable Wi-Fi API still retries HTTP.
   return type(ip)=="string" and ip~="" and ip~="0.0.0.0"
 end
+local function suspend_wifi()
+  wifi.stop()
+  -- Preserve the station credentials while disabling the radio across restarts.
+  wifi.mode(wifi.NULLMODE,true)
+end
+local function activate_fallback()
+  if cfg.transport~="auto" or state.active_transport=="wifi" then return end
+  if state.fallback_retry and monotonic()<state.fallback_retry then return end
+  state.fallback_retry=monotonic()+30
+  local ok=pcall(function()
+    local saved=wifi.sta.getconfig()
+    assert(cfg.wifi_fallback_ssid~="" and saved and saved.ssid==cfg.wifi_fallback_ssid,"Wrong fallback network")
+    wifi.mode(wifi.STATION,false);wifi.start();wifi.sta.connect()
+  end)
+  if not ok then state.error="备用Wi-Fi不可用";render();return end
+  state.active_transport="wifi";state.wifi_connected=false
+  state.last_fetch=-10000;state.next_retry=nil;state.failures=0;state.error=nil
+  state.connection=state.snapshot and "离线缓存" or "未连接"
+  render()
+end
 local function refresh(force)
+  if state.active_transport=="usb" then return end
   if not state.alive or state.busy then return end
   if cfg.api_url=="" then
     if state.connection~="待配置" then state.connection="待配置";render() end
@@ -377,7 +415,7 @@ local function refresh(force)
       local data,err=model.normalize(doc)
       if not data then fail(err or "接口数据无效");return end
       state.snapshot=data;state.server_epoch=data.generated_at;state.server_tick=state.tick;state.server_mono=monotonic()
-      state.last_received=state.tick;state.failures=0;state.next_retry=nil;state.error=nil;state.connection="已同步"
+      state.last_source="wifi";state.last_received=state.tick;state.failures=0;state.next_retry=nil;state.error=nil;state.connection="已同步"
       -- One compact cache per successful poll; keep the last valid response on failure.
       pcall(file.putcontents,BASE.."cache.json",codec.encode(data))
       render()
@@ -407,6 +445,7 @@ local function stop()
   state.alive=false;state.request_id=state.request_id+1
   pcall(function() timer:unregister() end)
   pcall(function() key.off() end)
+  if usb then pcall(usb.stop) end
   lv_obj_clean(root)
   for _,f in ipairs(fonts) do pcall(lv_font_free,f) end
 end
@@ -419,7 +458,7 @@ key.on(function(code,event)
     switch_page(code==key.RIGHT and 1 or -1)
   elseif code==key.UP then
     if state.page==2 then advance_message();state.rotate_at=state.tick+cfg.rotate_seconds
-    else state.window=model.has_secondary(state.snapshot) and (state.window==1 and 2 or 1) or 1;refresh(true) end
+    else refresh(true) end
   elseif code==key.DOWN then cfg.auto_rotate=not cfg.auto_rotate end
   render()
 end)
@@ -427,7 +466,15 @@ render()
 timer:alarm(1000,tmr.ALARM_AUTO,function()
   if app.exiting and app.exiting() then stop();return end
   state.tick=state.tick+1
-  local connected=wifi_connected()
+  if cfg.transport=="auto" and state.active_transport=="usb" then
+    local age=monotonic()-(state.usb_received or state.usb_started or 0)
+    if age>=(state.usb_received and cfg.usb_timeout_seconds or 20) then activate_fallback() end
+  end
+  local connected
+  if state.active_transport=="wifi" then connected=wifi_connected() end
+  if cfg.transport=="usb" and state.usb_received and monotonic()-state.usb_received>cfg.refresh_seconds*2+20 and state.connection=="已同步" then
+    state.connection="离线缓存";render()
+  end
   if connected~=nil then
     if state.wifi_connected~=nil and connected~=state.wifi_connected and not state.busy then
       -- Detect recovery promptly even during a five-minute retry wait.
@@ -444,4 +491,69 @@ timer:alarm(1000,tmr.ALARM_AUTO,function()
   elseif state.tick%30==0 then render() end
   refresh(false)
 end)
+local function disable_wifi()
+  -- Erase station credentials in persistent storage, then keep the radio off.
+  wifi.stop()
+  wifi.mode(wifi.STATION,true)
+  wifi.sta.config({ssid="",pwd=""},true)
+  wifi.mode(wifi.NULLMODE,true)
+  wifi.stop()
+end
+if uart and uart.setup and uart.on and uart.write then
+  local function usb_status()
+    local saved=wifi and wifi.sta and wifi.sta.getconfig and wifi.sta.getconfig() or nil
+    return {transport=cfg.transport,active_transport=state.active_transport,last_source=state.last_source,
+      connection=state.connection,can_configure_wifi=true,can_fallback=cfg.transport=="auto",generated_at=state.snapshot and state.snapshot.generated_at,
+      wifi_mode=wifi and wifi.getmode and wifi.getmode(),
+      saved_ssid=saved and saved.ssid or nil,ip=wifi and wifi.sta and wifi.sta.getip and wifi.sta.getip() or nil}
+  end
+  local ok,result=pcall(function()
+    return dofile(BASE.."usb_transport.lua").start({status=usb_status,
+      accept=function(body)
+        local data,err=model.normalize(decode(body))
+        if not data then return false,err end
+        -- Ignore an in-flight HTTP response once USB has supplied newer data.
+        state.request_id=state.request_id+1;state.busy=false
+        if cfg.transport=="auto" then
+          if state.active_transport~="usb" then pcall(suspend_wifi) end
+          state.active_transport="usb";state.fallback_retry=nil
+        end
+        state.last_source="usb"
+        state.snapshot=data;state.server_epoch=data.generated_at;state.server_mono=monotonic()
+        state.usb_received=monotonic();state.last_received=state.tick
+        state.connection="已同步";state.error=nil;state.failures=0
+        pcall(file.putcontents,BASE.."cache.json",codec.encode(data));render()
+        return true
+      end,
+      configure_wifi=function(ssid,password)
+        assert(type(ssid)=="string" and #ssid>0 and #ssid<=32 and not ssid:find("[%z\r\n]"),"Invalid SSID")
+        assert(type(password)=="string" and #password>=8 and #password<=63 and not password:find("[%z\r\n]"),"Invalid password")
+        wifi.stop();wifi.mode(wifi.STATION,false)
+        wifi.sta.config({ssid=ssid,pwd=password},true)
+        local saved=wifi.sta.getconfig();assert(saved and saved.ssid==ssid,"SSID not saved")
+        loaded.transport="auto";loaded.wifi_fallback_ssid=ssid
+        assert(file.putcontents(BASE.."config.json",codec.encode(loaded)),"Could not save configuration")
+        cfg.transport="auto";cfg.wifi_fallback_ssid=ssid;state.active_transport="usb"
+        state.request_id=state.request_id+1;state.busy=false;state.fallback_retry=nil
+        state.usb_received=nil;state.usb_started=monotonic();state.connection="离线缓存"
+        suspend_wifi();render()
+      end,
+      upstream_unavailable=function() activate_fallback() end,
+      usb_only=function()
+        loaded.transport="usb"
+        assert(file.putcontents(BASE.."config.json",codec.encode(loaded)),"Could not save USB configuration")
+        cfg.transport="usb";state.active_transport="usb";state.request_id=state.request_id+1;state.busy=false
+        disable_wifi();render()
+      end})
+  end)
+  if ok then usb=result else print("[xiaobucubic] USB unavailable") end
+end
+state.usb_started=monotonic()
+if cfg.transport=="auto" then
+  pcall(suspend_wifi);state.connection="离线缓存";render()
+elseif cfg.transport=="usb" then
+  local ok=pcall(disable_wifi)
+  if not ok then pcall(wifi.stop);state.error="Wi-Fi配置清除失败" end
+  state.connection="离线缓存";render()
+end
 refresh(true)

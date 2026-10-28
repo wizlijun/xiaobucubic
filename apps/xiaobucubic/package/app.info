@@ -8,4 +8,4 @@ entry = main.lua
 icon = main.png
 description = Dynamic server quotas and traffic balances with weather and reminders
 description_zh_cn = 按服务端数据动态排列额度与流量余额，多项自动分页
-version = 1.1.6
+version = 1.2.2
