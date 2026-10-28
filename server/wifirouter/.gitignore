@@ -1,0 +1,8 @@
+.tools/
+build/
+managed_components/
+sdkconfig
+sdkconfig.old
+config.local.json
+backups/
+__pycache__/

@@ -1,0 +1,6 @@
+{
+  "ssid": "ap24",
+  "password": "replace-this-password",
+  "channel": 6,
+  "max_clients": 4
+}
