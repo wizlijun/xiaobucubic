@@ -1,7 +1,7 @@
 {
   "version": 1,
   "project_id": "01a17846-e88a-718d-bf61-3faa88e8cb1d",
-  "seq": 5448,
+  "seq": 5453,
   "epoch": 1,
   "epoch_high_water": 1,
   "omitted_heartbeats": [
@@ -76,6 +76,10 @@
     {
       "first": 4706,
       "last": 5447
+    },
+    {
+      "first": 5449,
+      "last": 5449
     }
   ],
   "recovery_jumps": [],
@@ -250,6 +254,99 @@
         },
         "title": "四象限"
       },
+      "C-7wcc2wnn": {
+        "created": {
+          "actor": "human:local",
+          "at": "2026-10-28T16:29:44.506Z",
+          "eid": "01a18358-8c92-7a3f-addb-96d2f73eb939",
+          "seq": 5453
+        },
+        "done_states": [
+          "已完成"
+        ],
+        "id": "C-7wcc2wnn",
+        "layout": {
+          "structure": [],
+          "x": {
+            "time": {
+              "field": "date"
+            }
+          },
+          "y": "none"
+        },
+        "limits": {
+          "body_max": 100,
+          "title_max": 30
+        },
+        "mode": "free",
+        "place": {
+          "height": 320,
+          "width": 960,
+          "x": 1068,
+          "y": -403
+        },
+        "rules": {
+          "add_card": "anyone",
+          "add_link": "anyone",
+          "change_state": "anyone",
+          "done_needs_human": true,
+          "edit_text": "anyone",
+          "fields": [
+            "date",
+            "source"
+          ],
+          "require_source": false,
+          "text": "",
+          "transitions": {}
+        },
+        "set_by": "delegate",
+        "states": [
+          "计划",
+          "进行中",
+          "已完成"
+        ],
+        "template": {
+          "definition": {
+            "card_fields": {
+              "date": "date",
+              "source": "ref"
+            },
+            "default_set_by": "delegate",
+            "done_states": [
+              "已完成"
+            ],
+            "export": [
+              "mermaid"
+            ],
+            "id": "timeline",
+            "layout": {
+              "structure": "none",
+              "x": {
+                "time": "date"
+              },
+              "y": "none"
+            },
+            "limits": {
+              "body_max": 100,
+              "title_max": 30
+            },
+            "states": [
+              "计划",
+              "进行中",
+              "已完成"
+            ],
+            "title": "时间线",
+            "type": "template",
+            "version": "1.1.0",
+            "views": [
+              "plan_deviation"
+            ]
+          },
+          "id": "timeline",
+          "version": "1.1.0"
+        },
+        "title": "时间线"
+      },
       "C-9obvia5d": {
         "created": {
           "actor": "human:local",
@@ -285,8 +382,14 @@
         "place": {
           "height": 420,
           "width": 880,
-          "x": 516,
-          "y": 121
+          "x": 519,
+          "y": 31
+        },
+        "placed": {
+          "actor": "human:local",
+          "at": "2026-10-28T16:29:29.723Z",
+          "eid": "01a18358-60f4-794c-9b98-635784d1adaa",
+          "seq": 5452
         },
         "rules": {
           "add_card": "anyone",
@@ -502,11 +605,11 @@
     },
     "MainInspection": {
       "complete": true,
-      "eid": "01a181dc-8508-726b-a973-2f0ad0130e5f",
+      "eid": "01a18358-5dd6-72fd-9495-95f45406cad6",
       "error": null,
-      "main": "20b7f6130f8f40b5529e98b89769a08cac7f71ad",
+      "main": "4cca2fa560ef072937882c16e39dca537c42b4fe",
       "passed": false,
-      "previous_main": "f35e44c185cfb9b1f71e8fe6fc71536aa66de63c"
+      "previous_main": "20b7f6130f8f40b5529e98b89769a08cac7f71ad"
     },
     "Prompt": {},
     "Proposal": {},
