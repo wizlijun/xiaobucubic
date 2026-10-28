@@ -1,7 +1,7 @@
 {
   "version": 1,
   "project_id": "01a17846-e88a-718d-bf61-3faa88e8cb1d",
-  "seq": 266,
+  "seq": 4702,
   "epoch": 1,
   "epoch_high_water": 1,
   "omitted_heartbeats": [
@@ -63,12 +63,72 @@
     },
     {
       "first": 217,
-      "last": 266
+      "last": 267
+    },
+    {
+      "first": 269,
+      "last": 4700
     }
   ],
   "recovery_jumps": [],
   "projection": {
-    "Alert": {},
+    "Alert": {
+      "git:f1acd0e4ca9d970dcbb5da959abab852048793d9e4e2da3ff00a43fdc5aee4cc": {
+        "data": {
+          "detail": {
+            "class": "major",
+            "commit": "f35e44c185cfb9b1f71e8fe6fc71536aa66de63c",
+            "severity": "blocking",
+            "violations": [
+              {
+                "path": ".towermd/AGENTS.md",
+                "reason": "配置、慢层目录、基线画布或快照路径只能由授权写入者修改",
+                "rule": "protected_path"
+              },
+              {
+                "path": ".towermd/config.yaml",
+                "reason": "配置、慢层目录、基线画布或快照路径只能由授权写入者修改",
+                "rule": "protected_path"
+              },
+              {
+                "path": "docs/tower/arch/.gitkeep",
+                "reason": "配置、慢层目录、基线画布或快照路径只能由授权写入者修改",
+                "rule": "protected_path"
+              },
+              {
+                "path": "docs/tower/baselines/.gitkeep",
+                "reason": "配置、慢层目录、基线画布或快照路径只能由授权写入者修改",
+                "rule": "protected_path"
+              },
+              {
+                "path": "docs/tower/intents/.gitkeep",
+                "reason": "配置、慢层目录、基线画布或快照路径只能由授权写入者修改",
+                "rule": "protected_path"
+              },
+              {
+                "path": "docs/tower/specs/.gitkeep",
+                "reason": "配置、慢层目录、基线画布或快照路径只能由授权写入者修改",
+                "rule": "protected_path"
+              },
+              {
+                "path": "docs/tower/state/events/2026-10.jsonl",
+                "reason": "配置、慢层目录、基线画布或快照路径只能由授权写入者修改",
+                "rule": "protected_path"
+              },
+              {
+                "path": "docs/tower/state/state.json",
+                "reason": "配置、慢层目录、基线画布或快照路径只能由授权写入者修改",
+                "rule": "protected_path"
+              }
+            ]
+          },
+          "reason": "unapproved_protected_change"
+        },
+        "event": "git:f1acd0e4ca9d970dcbb5da959abab852048793d9e4e2da3ff00a43fdc5aee4cc",
+        "id": "git:f1acd0e4ca9d970dcbb5da959abab852048793d9e4e2da3ff00a43fdc5aee4cc",
+        "resolved": false
+      }
+    },
     "Baseline": {},
     "BaselineApproval": {},
     "Evidence": {},
@@ -314,11 +374,11 @@
     },
     "MainInspection": {
       "complete": true,
-      "eid": "01a178d2-946b-7768-8a04-5194dde32a18",
+      "eid": "01a181dc-3708-71ad-b99f-5c4f0261a494",
       "error": null,
-      "main": "9b7808e8700512470660f2cba4c2fcc7b95ade4d",
-      "passed": true,
-      "previous_main": "7779e03e462eca1dad66a808f794f3fb0bfd395f"
+      "main": "f35e44c185cfb9b1f71e8fe6fc71536aa66de63c",
+      "passed": false,
+      "previous_main": "9b7808e8700512470660f2cba4c2fcc7b95ade4d"
     },
     "Prompt": {},
     "Proposal": {},
