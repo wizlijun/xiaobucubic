@@ -4,9 +4,16 @@ local model=dofile(BASE.."display_model.lua")
 local codec=sjson or json
 local C={bg=0x070C12,panel=0x111C28,line=0x203142,text=0xF0F5FC,muted=0x8497AC,
   mint=0x6DE1C2,blue=0x83B6FF,amber=0xFFC078,yellow=0xFFD166,red=0xFF5F6D}
-local cfg={api_url="",read_token="",refresh_seconds=60,rotate_seconds=15,auto_rotate=true}
-local state={alive=true,busy=false,tick=0,page=1,window=1,message=1,message_part=1,last_fetch=-10000,request_id=0,
+local NOTE_COLORS={
+  {paper=0xFFF2A6,header=0xE2CA65}, -- yellow
+  {paper=0xDDEEB4,header=0xAEC87C}, -- green
+  {paper=0xF7B6B2,header=0xDE8580}, -- coral red
+  {paper=0xB9DFF2,header=0x83BBD7}, -- sky blue
+}
+local cfg={api_url="",read_token="",refresh_seconds=60,rotate_seconds=15,auto_rotate=true,utc_offset_minutes=480}
+local state={alive=true,busy=false,tick=0,page=1,quota_page=1,window=1,message=1,last_fetch=-10000,request_id=0,
   last_received=nil,rotate_at=15,connection="等待配置",snapshot=nil,error=nil,failures=0}
+local usb
 local fonts={}
 local ui={nodes={},props={}}
 
@@ -25,6 +32,11 @@ cfg.read_token=model.text(loaded.read_token,"",512)
 cfg.refresh_seconds=model.number(loaded.refresh_seconds,15,3600) or 60
 cfg.rotate_seconds=model.number(loaded.rotate_seconds,8,120) or 15
 cfg.auto_rotate=loaded.auto_rotate~=false
+cfg.utc_offset_minutes=model.number(loaded.utc_offset_minutes,-720,840) or 480
+cfg.transport=loaded.transport=="auto" and "auto" or loaded.transport=="usb" and "usb" or "wifi"
+cfg.wifi_fallback_ssid=model.text(loaded.wifi_fallback_ssid,"",64)
+cfg.usb_timeout_seconds=model.number(loaded.usb_timeout_seconds,30,600) or math.max(90,cfg.refresh_seconds+30)
+state.active_transport=cfg.transport=="wifi" and "wifi" or "usb"
 state.rotate_at=cfg.rotate_seconds
 local cached=read_json(BASE.."cache.json")
 if cached then state.snapshot=model.normalize(cached);state.connection="离线缓存" end
@@ -125,20 +137,14 @@ local function sync_messages()
   state.message=selected or math.min(state.message,math.max(1,#messages))
   local r=messages[state.message]
   local key=r and message_key(r,state.message)
-  if key~=state.message_key then state.message_part=1 end
   state.message_key=key
   state.active_count=#messages
+  state.quota_page=math.min(state.quota_page,model.quota_pages(state.snapshot))
   if #messages==0 then state.page=1 end
   return messages
 end
-local function countdown(t)
-  local n=now()
-  if not t or not n then return "" end
-  local s=math.max(0,t-n)
-  if s==0 then return "待刷新" end
-  if s>=86400 then return math.ceil(s/86400).."天后重置" end
-  if s>=3600 then return math.floor(s/3600).."小时后重置" end
-  return math.max(1,math.ceil(s/60)).."分钟后重置"
+local function reset_date(t)
+  return model.reset_date(t,now(),cfg.utc_offset_minutes)
 end
 local function num(v,suffix)
   if type(v)~="number" then return "--" end
@@ -156,12 +162,24 @@ end
 local function network_indicator()
   local badge=state.busy and "同步中" or state.connection=="已同步" and "在线" or
     state.connection=="离线缓存" and "离线" or state.connection=="待配置" and "待配置" or "未连接"
+  if state.active_transport=="usb" then badge=state.connection=="已同步" and "USB" or "USB离线"
+  elseif state.connection=="已同步" then
+    local ssid=cfg.wifi_fallback_ssid
+    if wifi and wifi.sta and wifi.sta.getconfig then
+      local ok,saved=pcall(wifi.sta.getconfig)
+      if ok and type(saved)=="table" then ssid=model.text(saved.ssid,ssid,32) end
+    end
+    badge=ssid~="" and ("Wi-Fi "..ssid) or "Wi-Fi"
+  end
   if state.error=="接口鉴权失败" then badge="鉴权失败"
   elseif state.error=="请求超时" then badge="超时" end
   local color=state.error and C.amber or state.connection=="已同步" and C.mint or C.muted
-  box("network.dot",root,245,10,4,4,color,2)
-  label("network.text",root,253,5,55,17,badge,small,color,LV_TEXT_ALIGN_RIGHT)
-  label("network.demo",root,253,23,55,14,state.snapshot and state.snapshot.demo and "演示" or "",small,C.amber,LV_TEXT_ALIGN_RIGHT)
+  if state.page==2 then color=state.error and 0x823B20 or 0x38432B end
+  local show_ap=badge:sub(1,6)=="Wi-Fi "
+  box("network.dot",root,show_ap and 220 or 245,10,4,4,color,2)
+  label("network.text",root,show_ap and 228 or 253,5,show_ap and 80 or 55,17,badge,small,color,
+    LV_TEXT_ALIGN_RIGHT,LV_LABEL_LONG_DOT or LV_LABEL_LONG_CLIP or LV_LABEL_LONG_WRAP)
+  label("network.demo",root,253,23,55,14,state.snapshot and state.snapshot.demo and "演示" or "",small,state.page==2 and 0x823B20 or C.amber,LV_TEXT_ALIGN_RIGHT)
 end
 local function weather_background()
   local asset=model.weather_asset(state.snapshot and state.snapshot.weather)
@@ -201,19 +219,29 @@ local function weather_inline()
 end
 local function draw_subscriptions()
   weather_background();weather_inline()
-  if not model.has_secondary(state.snapshot) then state.window=1 end
+  -- Keep the server-defined primary/secondary roles stable across refreshes and keys.
+  state.window=1
   local data=state.snapshot
   if not data or #data.subscriptions==0 then
     label("quota.empty.title",root,18,113,284,26,"等待额度数据",medium,C.text)
-    label("quota.empty.body",root,18,149,284,60,cfg.api_url=="" and "设置 config.json 的 api_url，连接你的数据接口。" or "接口接通后，这里显示 Claude、Codex 和 Grok 的剩余额度。",medium,C.muted)
+    label("quota.empty.body",root,18,149,284,60,cfg.api_url=="" and "设置 config.json 的 api_url，连接你的数据接口。" or "接口接通后，这里显示服务端提供的剩余额度。",medium,C.muted)
     return
   end
-  for i,p in ipairs(data.subscriptions) do
-    local id="quota."..i
+  local layout=model.subscription_layout(data,state.quota_page)
+  if model.quota_pages(data)>1 then
+    label("quota.pages",root,211,23,34,14,state.quota_page.."/"..model.quota_pages(data),small,C.muted,LV_TEXT_ALIGN_RIGHT)
+  end
+  local palette={C.amber,C.mint,C.blue}
+  local clip=LV_LABEL_LONG_DOT or LV_LABEL_LONG_CLIP or LV_LABEL_LONG_WRAP
+  for slot,card in ipairs(layout) do
+    local p=data.subscriptions[card.index]
+    local id="quota."..slot
+    local width,height=card.width,card.height
+    local grid=width<200
     -- Both layers must be translucent: an opaque panel would hide the weather
     -- even when the progress tint itself has a low opacity.
-    local panel=box(id,root,12,72+(i-1)*55,296,52,C.panel,7,state.background and 52 or 255)
-    local accent=p.id=="claude" and C.amber or p.id=="codex" and C.mint or C.blue
+    local panel=box(id,root,card.x,card.y,width,height,C.panel,7,state.background and 52 or 255)
+    local accent=palette[(card.index-1)%#palette+1]
     local w=model.select_window(p,state.window)
     local companion=model.companion_window(p,state.window)
     local status=model.window_state(p,w,now(),data.stale_after_seconds)
@@ -223,38 +251,55 @@ local function draw_subscriptions()
     local tone=level=="critical" and C.red or level=="low" and C.yellow or valid and accent or C.muted
     -- Full-height progress tint sits behind the text; width is remaining quota.
     -- Every color (including warning/red) stays translucent and fades downwards.
-    local fill=box(id..".progress",panel,0,0,value and math.max(1,296*math.min(value,100)/100) or 1,52,
+    local fill=box(id..".progress",panel,0,0,value and math.max(1,width*math.min(value,100)/100) or 1,height,
       tone,7,value and value>0 and (valid and 64 or 35) or 0)
     style(fill,"bg_grad_color",mix_color(C.panel,tone,0.16))
     style(fill,"bg_grad_dir",LV_GRAD_DIR_VER)
     style(fill,"bg_main_stop",0);style(fill,"bg_grad_stop",255)
-    label(id..".name",panel,10,5,155,20,p.name,medium,C.text)
-    label(id..".value",panel,202,5,82,20,value and num(value,"%") or "--",medium,
-      tone,LV_TEXT_ALIGN_RIGHT)
-    local detail=w and w.label or "暂无用量"
+    local balance=w and w.remaining_bytes and (model.format_bytes(w.remaining_bytes).."/"..model.format_bytes(w.total_bytes))
+    local top=(height<45 or grid) and 2 or 5
+    local value_width=grid and 50 or balance and 176 or 82
+    local value_x=width-12-value_width
+    label(id..".name",panel,grid and 6 or 10,top,value_x-(grid and 10 or 16),20,p.name,medium,C.text,LV_TEXT_ALIGN_LEFT,clip)
+    label(id..".value",panel,value_x,top,value_width,20,
+      not grid and balance or value and num(value,"%") or "--",medium,tone,LV_TEXT_ALIGN_RIGHT,clip)
+    local detail=model.window_label(w)
     -- With two windows, omit the redundant official-source label so the
     -- window and reset time fit without a moving marquee. Keep non-official sources.
-    if not companion or p.source~="official" then detail=detail.." · "..source_names[p.source] end
+    if balance then detail=detail.." · "..(value and num(value,"%") or "--")
+    elseif (not companion and not grid and height>=45) or p.source~="official" then detail=detail.." · "..source_names[p.source] end
     if status=="stale" then detail=detail.." · 已过期"
     elseif status=="expired" then detail=detail.." · 待刷新"
-    elseif w and w.reset_at then detail=detail.." · "..countdown(w.reset_at) end
-    label(id..".detail",panel,10,28,companion and 160 or 278,15,detail,small,C.muted,
-      LV_TEXT_ALIGN_LEFT,companion and (LV_LABEL_LONG_DOT or LV_LABEL_LONG_CLIP or LV_LABEL_LONG_WRAP) or LV_LABEL_LONG_WRAP)
+    elseif w and w.reset_at then detail=detail.." "..reset_date(w.reset_at) end
+    local detail_y=(height<45 or grid) and 21 or 28
+    label(id..".detail",panel,grid and 6 or 10,detail_y,grid and width-12 or companion and 120 or width-20,
+      (height<45 or grid) and 13 or 15,grid and balance or detail,small,C.muted,LV_TEXT_ALIGN_LEFT,clip)
+    if grid and balance and not companion then
+      label(id..".reset",panel,6,35,width-12,13,detail,small,C.muted,LV_TEXT_ALIGN_LEFT,clip)
+    end
     if companion then
       local secondary_status=model.window_state(p,companion,now(),data.stale_after_seconds)
       local secondary_value=model.remaining(companion)
       local secondary_level=model.quota_level(secondary_value)
       local secondary_tone=secondary_level=="critical" and C.red or secondary_level=="low" and C.yellow or
         secondary_status=="ok" and accent or C.muted
-      local summary=companion.label.." "..(secondary_value and num(secondary_value,"%") or "--")
+      local summary=(companion.label=="7天" and "" or model.window_label(companion).." ")..
+        (secondary_value and num(secondary_value,"%") or "--")
       if secondary_status=="stale" then summary=summary.." · 已过期"
-      elseif secondary_status=="expired" then summary=summary.." · 待刷新" end
-      label(id..".secondary.label",panel,178,28,106,15,summary,small,secondary_tone,
-        LV_TEXT_ALIGN_RIGHT,LV_LABEL_LONG_DOT or LV_LABEL_LONG_CLIP or LV_LABEL_LONG_WRAP)
+      elseif secondary_status=="expired" then summary=summary.." · 待刷新"
+      elseif companion.reset_at then
+        local reset=reset_date(companion.reset_at)
+        if reset~="" then summary=summary.." "..reset end
+      end
+      label(id..".secondary.label",panel,grid and 6 or width-164,grid and 35 or detail_y,
+        grid and width-12 or 152,(height<45 or grid) and 13 or 15,summary,small,secondary_tone,LV_TEXT_ALIGN_RIGHT,
+        grid and LV_LABEL_LONG_SCROLL or clip)
       -- A narrow inset rail blends into the bottom of the main quota fill.
-      box(id..".secondary.track",panel,10,46,274,4,C.muted,2,24)
-      local rail=box(id..".secondary.fill",panel,10,46,
-        secondary_value and math.max(1,274*math.min(secondary_value,100)/100) or 1,4,
+      local rail_y,rail_height=height-3,2
+      if not grid and height>=45 then rail_y=height-6;rail_height=4 end
+      box(id..".secondary.track",panel,10,rail_y,width-22,rail_height,C.muted,2,24)
+      local rail=box(id..".secondary.fill",panel,10,rail_y,
+        secondary_value and math.max(1,(width-22)*math.min(secondary_value,100)/100) or 1,rail_height,
         secondary_tone,2,secondary_value and secondary_value>0 and (secondary_status=="ok" and 112 or 55) or 0)
       style(rail,"bg_grad_color",mix_color(C.panel,secondary_tone,0.35))
       style(rail,"bg_grad_dir",LV_GRAD_DIR_VER)
@@ -264,23 +309,27 @@ local function draw_subscriptions()
 end
 local function draw_reminder(messages)
   local r=messages[state.message]
-  label("message.count",root,12,7,225,20,"消息 · "..state.message.." / "..#messages,small,C.muted)
   if not r then return end
-  local accent=r.priority=="high" and C.amber or C.mint
-  box("message.accent",root,12,34,3,198,accent,1)
-  -- Title-free reminders leave room for seven lines of large body text.
-  local chunks=model.message_chunks(r.text)
-  state.message_part=math.min(state.message_part,#chunks)
-  local body=label("message.body",root,25,44,278,194,chunks[state.message_part],message_font,C.text)
-  style(body,"text_line_space",2)
+  -- Each reminder occupies one sheet, with colors cycling through the palette.
+  local palette=NOTE_COLORS[(state.message-1)%#NOTE_COLORS+1]
+  local paper=palette.paper
+  local ink,muted=0x30382D,0x626B50
+  local header=palette.header
+  box("message.header",root,0,0,320,29,header,0)
+  label("message.count",root,14,6,225,20,"便签 · "..state.message.." / "..#messages,small,ink)
+  local sheet=box("message.paper",root,0,29,320,211,paper,0)
+  local body=label("message.body",sheet,22,14,276,158,model.message_preview(r.text),message_font,ink,
+    LV_TEXT_ALIGN_LEFT,LV_LABEL_LONG_CLIP)
+  style(body,"text_line_space",4)
   local due=""
   if r.due_at and now() then
     local mins=math.ceil((r.due_at-now())/60)
     due=mins<=0 and "已到提醒时间" or mins<60 and (mins.."分钟后") or (math.ceil(mins/60).."小时后")
   end
-  label("message.meta",root,25,26,283,17,(r.sender=="bot" and "Bot · " or "")..
-    (r.priority=="high" and "重要" or "备忘")..(due~="" and " · "..due or "")..
-    (#chunks>1 and (" · "..state.message_part.."/"..#chunks) or ""),small,accent)
+  label("message.meta",sheet,22,184,226,17,(r.sender=="bot" and "Bot · " or "")..
+    (r.priority=="high" and "重要" or "备忘")..(due~="" and " · "..due or ""),small,muted,
+    LV_TEXT_ALIGN_LEFT,LV_LABEL_LONG_CLIP)
+
 end
 local function render()
   if not state.alive then return end
@@ -308,7 +357,28 @@ local function wifi_connected()
   if not ok then return nil end -- Firmware without a usable Wi-Fi API still retries HTTP.
   return type(ip)=="string" and ip~="" and ip~="0.0.0.0"
 end
+local function suspend_wifi()
+  wifi.stop()
+  -- Preserve the station credentials while disabling the radio across restarts.
+  wifi.mode(wifi.NULLMODE,true)
+end
+local function activate_fallback()
+  if cfg.transport~="auto" or state.active_transport=="wifi" then return end
+  if state.fallback_retry and monotonic()<state.fallback_retry then return end
+  state.fallback_retry=monotonic()+30
+  local ok=pcall(function()
+    local saved=wifi.sta.getconfig()
+    assert(cfg.wifi_fallback_ssid~="" and saved and saved.ssid==cfg.wifi_fallback_ssid,"Wrong fallback network")
+    wifi.mode(wifi.STATION,false);wifi.start();wifi.sta.connect()
+  end)
+  if not ok then state.error="备用Wi-Fi不可用";render();return end
+  state.active_transport="wifi";state.wifi_connected=false
+  state.last_fetch=-10000;state.next_retry=nil;state.failures=0;state.error=nil
+  state.connection=state.snapshot and "离线缓存" or "未连接"
+  render()
+end
 local function refresh(force)
+  if state.active_transport=="usb" then return end
   if not state.alive or state.busy then return end
   if cfg.api_url=="" then
     if state.connection~="待配置" then state.connection="待配置";render() end
@@ -345,7 +415,7 @@ local function refresh(force)
       local data,err=model.normalize(doc)
       if not data then fail(err or "接口数据无效");return end
       state.snapshot=data;state.server_epoch=data.generated_at;state.server_tick=state.tick;state.server_mono=monotonic()
-      state.last_received=state.tick;state.failures=0;state.next_retry=nil;state.error=nil;state.connection="已同步"
+      state.last_source="wifi";state.last_received=state.tick;state.failures=0;state.next_retry=nil;state.error=nil;state.connection="已同步"
       -- One compact cache per successful poll; keep the last valid response on failure.
       pcall(file.putcontents,BASE.."cache.json",codec.encode(data))
       render()
@@ -356,18 +426,18 @@ end
 local timer=tmr.create()
 local function advance_message()
   local messages=sync_messages()
-  if #messages==0 then state.message=1;state.message_part=1;return end
-  local current=messages[math.min(state.message,#messages)]
-  local chunks=model.message_chunks(current.text)
-  if state.message_part<#chunks then state.message_part=state.message_part+1
-  else state.message=state.message%#messages+1;state.message_part=1 end
+  if #messages==0 then state.message=1;return end
+  state.message=state.message%#messages+1
   state.message_key=message_key(messages[state.message],state.message)
 end
 local function switch_page(delta)
   sync_messages()
-  local n=#model.pages(state.snapshot,now())
+  local pages=model.pages(state.snapshot,now())
+  local current=state.page==2 and #pages or state.quota_page
   if state.page==2 then advance_message() end
-  state.page=(state.page-1+delta)%n+1
+  local target=pages[(current-1+delta)%#pages+1]
+  state.page=target.kind=="messages" and 2 or 1
+  state.quota_page=target.quota_page or state.quota_page
   state.rotate_at=state.tick+cfg.rotate_seconds
 end
 local function stop()
@@ -375,6 +445,7 @@ local function stop()
   state.alive=false;state.request_id=state.request_id+1
   pcall(function() timer:unregister() end)
   pcall(function() key.off() end)
+  if usb then pcall(usb.stop) end
   lv_obj_clean(root)
   for _,f in ipairs(fonts) do pcall(lv_font_free,f) end
 end
@@ -387,7 +458,7 @@ key.on(function(code,event)
     switch_page(code==key.RIGHT and 1 or -1)
   elseif code==key.UP then
     if state.page==2 then advance_message();state.rotate_at=state.tick+cfg.rotate_seconds
-    else state.window=model.has_secondary(state.snapshot) and (state.window==1 and 2 or 1) or 1;refresh(true) end
+    else refresh(true) end
   elseif code==key.DOWN then cfg.auto_rotate=not cfg.auto_rotate end
   render()
 end)
@@ -395,7 +466,15 @@ render()
 timer:alarm(1000,tmr.ALARM_AUTO,function()
   if app.exiting and app.exiting() then stop();return end
   state.tick=state.tick+1
-  local connected=wifi_connected()
+  if cfg.transport=="auto" and state.active_transport=="usb" then
+    local age=monotonic()-(state.usb_received or state.usb_started or 0)
+    if age>=(state.usb_received and cfg.usb_timeout_seconds or 20) then activate_fallback() end
+  end
+  local connected
+  if state.active_transport=="wifi" then connected=wifi_connected() end
+  if cfg.transport=="usb" and state.usb_received and monotonic()-state.usb_received>cfg.refresh_seconds*2+20 and state.connection=="已同步" then
+    state.connection="离线缓存";render()
+  end
   if connected~=nil then
     if state.wifi_connected~=nil and connected~=state.wifi_connected and not state.busy then
       -- Detect recovery promptly even during a five-minute retry wait.
@@ -412,4 +491,69 @@ timer:alarm(1000,tmr.ALARM_AUTO,function()
   elseif state.tick%30==0 then render() end
   refresh(false)
 end)
+local function disable_wifi()
+  -- Erase station credentials in persistent storage, then keep the radio off.
+  wifi.stop()
+  wifi.mode(wifi.STATION,true)
+  wifi.sta.config({ssid="",pwd=""},true)
+  wifi.mode(wifi.NULLMODE,true)
+  wifi.stop()
+end
+if uart and uart.setup and uart.on and uart.write then
+  local function usb_status()
+    local saved=wifi and wifi.sta and wifi.sta.getconfig and wifi.sta.getconfig() or nil
+    return {transport=cfg.transport,active_transport=state.active_transport,last_source=state.last_source,
+      connection=state.connection,can_configure_wifi=true,can_fallback=cfg.transport=="auto",generated_at=state.snapshot and state.snapshot.generated_at,
+      wifi_mode=wifi and wifi.getmode and wifi.getmode(),
+      saved_ssid=saved and saved.ssid or nil,ip=wifi and wifi.sta and wifi.sta.getip and wifi.sta.getip() or nil}
+  end
+  local ok,result=pcall(function()
+    return dofile(BASE.."usb_transport.lua").start({status=usb_status,
+      accept=function(body)
+        local data,err=model.normalize(decode(body))
+        if not data then return false,err end
+        -- Ignore an in-flight HTTP response once USB has supplied newer data.
+        state.request_id=state.request_id+1;state.busy=false
+        if cfg.transport=="auto" then
+          if state.active_transport~="usb" then pcall(suspend_wifi) end
+          state.active_transport="usb";state.fallback_retry=nil
+        end
+        state.last_source="usb"
+        state.snapshot=data;state.server_epoch=data.generated_at;state.server_mono=monotonic()
+        state.usb_received=monotonic();state.last_received=state.tick
+        state.connection="已同步";state.error=nil;state.failures=0
+        pcall(file.putcontents,BASE.."cache.json",codec.encode(data));render()
+        return true
+      end,
+      configure_wifi=function(ssid,password)
+        assert(type(ssid)=="string" and #ssid>0 and #ssid<=32 and not ssid:find("[%z\r\n]"),"Invalid SSID")
+        assert(type(password)=="string" and #password>=8 and #password<=63 and not password:find("[%z\r\n]"),"Invalid password")
+        wifi.stop();wifi.mode(wifi.STATION,false)
+        wifi.sta.config({ssid=ssid,pwd=password},true)
+        local saved=wifi.sta.getconfig();assert(saved and saved.ssid==ssid,"SSID not saved")
+        loaded.transport="auto";loaded.wifi_fallback_ssid=ssid
+        assert(file.putcontents(BASE.."config.json",codec.encode(loaded)),"Could not save configuration")
+        cfg.transport="auto";cfg.wifi_fallback_ssid=ssid;state.active_transport="usb"
+        state.request_id=state.request_id+1;state.busy=false;state.fallback_retry=nil
+        state.usb_received=nil;state.usb_started=monotonic();state.connection="离线缓存"
+        suspend_wifi();render()
+      end,
+      upstream_unavailable=function() activate_fallback() end,
+      usb_only=function()
+        loaded.transport="usb"
+        assert(file.putcontents(BASE.."config.json",codec.encode(loaded)),"Could not save USB configuration")
+        cfg.transport="usb";state.active_transport="usb";state.request_id=state.request_id+1;state.busy=false
+        disable_wifi();render()
+      end})
+  end)
+  if ok then usb=result else print("[xiaobucubic] USB unavailable") end
+end
+state.usb_started=monotonic()
+if cfg.transport=="auto" then
+  pcall(suspend_wifi);state.connection="离线缓存";render()
+elseif cfg.transport=="usb" then
+  local ok=pcall(disable_wifi)
+  if not ok then pcall(wifi.stop);state.error="Wi-Fi配置清除失败" end
+  state.connection="离线缓存";render()
+end
 refresh(true)

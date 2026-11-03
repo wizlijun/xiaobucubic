@@ -35,14 +35,21 @@ function M.normalize(doc)
     subscriptions={}, messages={}}
   local seen = {}
   for _, p in ipairs(doc.subscriptions) do
-    if type(p)=="table" and type(p.id)=="string" and not seen[p.id] and #out.subscriptions<3 then
+    if type(p)=="table" and type(p.id)=="string" and p.id~="" and not seen[p.id] then
       seen[p.id]=true
-      local row={id=text(p.id,"",32),name=text(p.name,p.id,20),plan=text(p.plan,"",24),
+      local row={id=text(p.id,"",64),name=text(p.name,p.id,40),plan=text(p.plan,"",24),
         source=source(p.source),updated_at=epoch(p.updated_at),windows={},note=text(p.note,"",80)}
       for _, w in ipairs(type(p.windows)=="table" and p.windows or {}) do
         if type(w)=="table" and #row.windows<2 then
-          row.windows[#row.windows+1]={label=text(w.label,"用量",16),
+          local window={label=text(w.label,"用量",16),
             used_percent=number(w.used_percent,0,1000),reset_at=epoch(w.reset_at)}
+          local total,used=number(w.total_bytes,1,9007199254740991),number(w.used_bytes,0,9007199254740991)
+          if total and used and total%1==0 and used%1==0 then
+            window.total_bytes=total;window.used_bytes=used
+            window.remaining_bytes=math.max(0,total-used)
+            window.used_percent=used/total*100
+          end
+          row.windows[#row.windows+1]=window
         end
       end
       out.subscriptions[#out.subscriptions+1]=row
@@ -108,10 +115,32 @@ function M.active_messages(data, now)
   return active
 end
 
+function M.quota_pages(data)
+  return math.max(1,math.ceil(#(data and data.subscriptions or {})/6))
+end
+
 function M.pages(data, now)
-  local pages={{kind="subscriptions"}}
-  if #M.active_messages(data,now)>0 then pages[2]={kind="messages"} end
+  local pages={}
+  for i=1,M.quota_pages(data) do pages[#pages+1]={kind="subscriptions",quota_page=i} end
+  if #M.active_messages(data,now)>0 then pages[#pages+1]={kind="messages"} end
   return pages
+end
+
+function M.subscription_layout(data, page)
+  local count=#(data and data.subscriptions or {})
+  page=math.max(1,math.min(page or 1,M.quota_pages(data)))
+  local first=(page-1)*6+1
+  local visible=math.min(6,count-first+1)
+  local columns=visible>4 and 2 or 1
+  local rows=math.max(1,math.ceil(visible/columns))
+  local height=math.min(52,math.floor((164-(rows-1)*3)/rows))
+  local width=columns==2 and 146 or 296
+  local cards={}
+  for i=1,visible do
+    cards[#cards+1]={index=first+i-1,x=12+((i-1)%columns)*(width+4),
+      y=72+math.floor((i-1)/columns)*(height+3),width=width,height=height}
+  end
+  return cards,page
 end
 
 function M.select_window(provider, index)
@@ -119,7 +148,7 @@ function M.select_window(provider, index)
 end
 
 function M.companion_window(provider, index)
-  if provider.id~="claude" or #provider.windows<2 then return nil end
+  if #provider.windows<2 then return nil end
   -- Array order defines the windows; labels remain display-only.
   return provider.windows[index==2 and 1 or 2]
 end
@@ -136,6 +165,57 @@ function M.remaining(window)
   return math.floor(math.max(0,100-window.used_percent))
 end
 
+function M.window_label(window)
+  if not window then return "暂无用量" end
+  return window.label=="7天" and "周限" or window.label
+end
+
+local function calendar_day(day)
+  -- Gregorian civil date from Unix days; independent of firmware RTC/timezone APIs.
+  local z=day+719468
+  local era=math.floor(z/146097)
+  local doe=z-era*146097
+  local yoe=math.floor((doe-math.floor(doe/1460)+math.floor(doe/36524)-math.floor(doe/146096))/365)
+  local year=yoe+era*400
+  local doy=doe-(365*yoe+math.floor(yoe/4)-math.floor(yoe/100))
+  local mp=math.floor((5*doy+2)/153)
+  local date=doy-math.floor((153*mp+2)/5)+1
+  local month=mp+(mp<10 and 3 or -9)
+  if month<=2 then year=year+1 end
+  return year,month,date
+end
+
+function M.reset_date(timestamp, now, offset_minutes)
+  if not epoch(timestamp) then return "" end
+  local offset=(number(offset_minutes,-720,840) or 480)*60
+  local local_seconds=timestamp+offset
+  local day=math.floor(local_seconds/86400)
+  local hour=math.floor(local_seconds%86400/3600)
+  local minute=math.floor(local_seconds%3600/60)
+  local today=epoch(now) and math.floor((now+offset)/86400) or nil
+  local date
+  if today and day==today then
+    date=""
+  elseif today and day>=today-(today+3)%7 and day<today-(today+3)%7+7 then
+    date="周"..({"一","二","三","四","五","六","日"})[(day+3)%7+1]
+  else
+    local year,month,d=calendar_day(day)
+    local current_year=today and calendar_day(today)
+    date=(current_year and current_year~=year and string.format("%d/",year) or "")..string.format("%02d/%02d ",month,d)
+  end
+  return date..string.format("%02d:%02d重置",hour,minute)
+end
+
+function M.format_bytes(bytes)
+  if not number(bytes,0,9007199254740991) then return "--" end
+  local units={"B","KiB","MiB","GiB","TiB","PiB"}
+  local unit=1
+  while bytes>=1024 and unit<#units do bytes=bytes/1024;unit=unit+1 end
+  -- Round down so a small balance never appears larger than the actual value.
+  local value=math.floor(bytes*10)/10
+  return string.format(value%1==0 and "%.0f" or "%.1f",value)..units[unit]
+end
+
 function M.quota_level(remaining)
   if remaining==nil then return "unknown" end
   if remaining<5 then return "critical" end
@@ -143,26 +223,72 @@ function M.quota_level(remaining)
   return "normal"
 end
 
+-- Conservative advances for the bundled 22px Noto font. CJK stays full-width;
+-- Latin words are measured as a unit before deciding where to wrap.
+function M.message_char_width(char)
+  if char==" " or char=="\t" then return 6 end
+  if #char>1 then return 22 end
+  if char:match("[ilI!.,:;'|`]") then return 7 end
+  if char:match("[MW@%%]") then return 22 end
+  if char:match("[A-Z]") then return 16 end
+  if char:match("[mw]") then return 19 end
+  return 13
+end
+
 function M.message_chunks(value, max_width, max_lines, measure)
-  -- Default units are 22px, deliberately conservative for the bundled 22px font.
-  max_width=max_width or 264;max_lines=max_lines or 7
-  measure=measure or function() return 22 end
+  max_width=max_width or 264;max_lines=max_lines or 5
+  measure=measure or M.message_char_width
   local parts,lines,current,width={}, {},{},0
+  local word,space={},false
   local function line()
     lines[#lines+1]=table.concat(current);current={};width=0
     if #lines==max_lines then parts[#parts+1]=table.concat(lines,"\n");lines={} end
   end
-  for char in (value or ""):gmatch("[%z\1-\127\194-\244][\128-\191]*") do
-    if char=="\n" then line()
-    else
-      local size=measure(char)
-      if width+size>max_width and #current>0 then line() end
-      current[#current+1]=char;width=width+size
+  local function token(chars)
+    local size=0
+    for _,char in ipairs(chars) do size=size+measure(char) end
+    local gap=space and #current>0 and measure(" ") or 0
+    if #current>0 and width+gap+size>max_width then line();gap=0 end
+    if gap>0 then current[#current+1]=" ";width=width+gap end
+    space=false
+    -- Only a token wider than a whole line may be split (e.g. a long URL).
+    for _,char in ipairs(chars) do
+      local advance=measure(char)
+      if #current>0 and width+advance>max_width then line() end
+      current[#current+1]=char;width=width+advance
     end
   end
+  local function flush()
+    if #word>0 then token(word);word={} end
+  end
+  for char in (value or ""):gmatch("[%z\1-\127\194-\244][\128-\191]*") do
+    if char=="\n" then flush();line();space=false
+    elseif char==" " or char=="\t" or char=="\r" then flush();space=true
+    elseif #char==1 then word[#word+1]=char
+    else flush();token({char}) end
+  end
+  flush()
   if #current>0 then line() end
   if #lines>0 then parts[#parts+1]=table.concat(lines,"\n") end
   if #parts==0 then parts[1]="" end
   return parts
+end
+function M.message_preview(value)
+  local chunks=M.message_chunks(value)
+  if #chunks==1 then return chunks[1] end
+  local prefix,last=chunks[1]:match("^(.*\n)([^\n]*)$")
+  prefix,last=prefix or "",last or chunks[1]
+  local chars,width={},0
+  for char in last:gmatch("[%z\1-\127\194-\244][\128-\191]*") do
+    chars[#chars+1]=char;width=width+M.message_char_width(char)
+  end
+  local removed=false
+  while width+M.message_char_width("…")>264 and #chars>0 do
+    width=width-M.message_char_width(table.remove(chars));removed=true
+  end
+  last=table.concat(chars)
+  -- If making room cut an English word, omit the rest of that word too.
+  if removed then last=last:gsub("[%w_]+$","") end
+  return prefix..last:gsub("%s+$","").."…"
 end
 return M

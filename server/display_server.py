@@ -29,7 +29,7 @@
     天气 pressure_hpa   当前海平面气压，单位 hPa
     <字段>_utc      每个 *_at 时间戳都附带一份 UTC 时间，如 updated_at_utc: "2026-10-22T11:09:59Z"
 
-定时采集: 服务依次运行 claude_usage.py / codex_usage.py / grok_usage.py /
+定时采集: 服务依次运行 claude_usage.py / codex_usage.py / grok_usage.py / banwagong_usage.py /
 weather_shenzhen.py --push，把最新用量和深圳天气写入缓存；单个脚本失败或超时
 只记录日志，缓存保留上一次成功的数据。采集间隔按 /v1/display 的请求动态调整:
     有请求时跟随请求间隔的平均值，请求越频繁刷新越快，范围 --min-interval 到
@@ -67,7 +67,7 @@ MAX_WINDOWS = 2
 MIN_TTL = 60
 BOT_DEFAULT_TTL = 24 * 3600
 BOT_MAX_TTL = 7 * 24 * 3600
-DEFAULT_ORDER = ("claude", "codex", "grok")
+DEFAULT_ORDER = ("claude", "codex", "grok", "banwagong")
 SOURCES = ("official", "manual", "estimated", "unknown")
 ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -76,6 +76,7 @@ COLLECTORS = {
     "claude": "claude_usage.py",
     "codex": "codex_usage.py",
     "grok": "grok_usage.py",
+    "banwagong": "banwagong_usage.py",
     "weather": "weather_shenzhen.py",
 }
 COLLECT_TIMEOUT = 90
@@ -135,11 +136,28 @@ def _check_id(value, what):
 def clean_window(body):
     if not isinstance(body, dict):
         raise BadRequest("windows 的每一项必须是对象")
-    return {
+    item = {
         "label": _text(body, "label", 16, required=True),
         "used_percent": _number(body, "used_percent", lo=0),
         "reset_at": _timestamp(body, "reset_at"),
     }
+    # 可选流量窗口：字节数保持整数精度，剩余量由服务端计算。
+    if any(key in body for key in ("total_bytes", "used_bytes", "remaining_bytes")):
+        for key in ("total_bytes", "used_bytes"):
+            value = body.get(key)
+            if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 2**53 - 1:
+                raise BadRequest("%s 必须是 0–2^53-1 的整数字节数" % key)
+            item[key] = value
+        if not item["total_bytes"]:
+            raise BadRequest("total_bytes 必须大于 0")
+        remaining = max(0, item["total_bytes"] - item["used_bytes"])
+        if "remaining_bytes" in body:
+            value = body["remaining_bytes"]
+            if isinstance(value, bool) or not isinstance(value, int) or value != remaining:
+                raise BadRequest("remaining_bytes 必须等于 max(0, total_bytes - used_bytes)")
+        item["remaining_bytes"] = remaining
+        item["used_percent"] = round(item["used_bytes"] / item["total_bytes"] * 100, 1)
+    return item
 
 
 def clean_subscription(sub_id, body, now):
@@ -439,7 +457,8 @@ class Handler(BaseHTTPRequestHandler):
             now = int(time.time())
             messages = self.server.store.read(lambda data: [
                 m for m in _active(data["messages"], now) if role == "admin" or m.get("sender") == "bot"])
-            return self._send(200, with_utc({"now": now, "messages": messages}))
+            return self._send(200, with_utc({"now": now, "messages": messages,
+                                              "capabilities": {"safe_create": True}}))
         if path != "/v1/display":
             return self._error(404, "not found")
         # 写 token 可读，只读 token 不可写。
@@ -556,6 +575,9 @@ class Handler(BaseHTTPRequestHandler):
             return 200, {"messages": messages}
 
         message = clean_message(body, now, bot=bot)
+        safe_create = body.get("safe_create", False)
+        if not isinstance(safe_create, bool):
+            raise BadRequest("safe_create 必须是布尔值")
 
         def upsert(data):
             messages = _active(data["messages"], now)
@@ -567,6 +589,10 @@ class Handler(BaseHTTPRequestHandler):
                     break
             else:
                 if len(messages) >= MAX_MESSAGES:
+                    # An opted-in bot must never evict another reminder. Check
+                    # capacity under the same store lock as the insertion.
+                    if bot and safe_create:
+                        raise Conflict("提醒已满，safe_create 不会替换已有提醒")
                     # 已满时丢弃最早的一条；机器人只会挤掉自己推送的提醒。
                     victims = [m for m in messages if m.get("sender") == "bot"] if bot else messages
                     if not victims:

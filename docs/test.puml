@@ -1,25 +1,3 @@
 @startuml
-title xiaobucubic 数据流示例
-left to right direction
-skinparam componentStyle rectangle
-skinparam shadowing false
-
-cloud "订阅平台与天气数据源" as sources
-component "用量与天气采集器" as collectors
-component "Python 显示服务" as server
-database "JSON 状态文件" as storage
-component "HoloCubic 客户端\nLua + LVGL" as client
-
-sources --> collectors : 查询用量与天气
-collectors --> server : HTTP PUT\n写入 token
-server --> storage : 持久化数据
-storage --> server : 启动时恢复
-client --> server : GET /v1/display\n读取 token（如已配置）
-server --> client : schema v1 JSON
-
-note bottom of client
-  显示额度、天气与提醒
-  保留有效缓存，失败后退避重试
-end note
-
+rectangle "1123" as E1
 @enduml
