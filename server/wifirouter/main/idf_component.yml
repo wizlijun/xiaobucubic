@@ -2,3 +2,6 @@ dependencies:
   idf: ">=5.5.2,<5.6"
   espressif/esp_tinyusb: "2.2.1"
   espressif/tinyusb: "0.19.0~3"
+  espressif/esp_lcd_st7701: "2.0.3"
+  espressif/esp_lcd_panel_io_additions: "1.0.1~1"
+  lvgl/lvgl: "8.3.11"

@@ -26,6 +26,8 @@
 #include "tinyusb_cdc_acm.h"
 #include "tinyusb_console.h"
 #include "router_config.h"
+#include "display.h"
+#include "app_runtime.h"
 
 /* One NCM configuration: macOS needs no third-party RNDIS driver.
    String IDs match esp_tinyusb's CDC + network string table (MAC = 6). */
@@ -229,6 +231,8 @@ static esp_err_t status_handler(httpd_req_t *req)
     cJSON_AddNumberToObject(json, "rx_dropped", atomic_load(&rx_dropped));
     cJSON_AddNumberToObject(json, "dns_queries", atomic_load(&dns_queries));
     cJSON_AddNumberToObject(json, "dns_failures", atomic_load(&dns_failures));
+    display_add_status(json);
+    app_runtime_add_status(json);
     char *body = cJSON_PrintUnformatted(json);
     cJSON_Delete(json);
     if (!body) return ESP_ERR_NO_MEM;
@@ -334,6 +338,7 @@ void app_main(void)
     httpd_uri_t status = { .uri = "/api/status", .method = HTTP_GET, .handler = status_handler };
     ESP_ERROR_CHECK(httpd_register_uri_handler(http, &root));
     ESP_ERROR_CHECK(httpd_register_uri_handler(http, &status));
+    display_start();
     ESP_LOGI(TAG, "%s ready: 2.4 GHz channel %d, WPA2; status http://10.42.32.1", ROUTER_SSID, ROUTER_CHANNEL);
     for (;;) {
         ESP_LOGI(TAG, "USB=%d NAT=%d heap=%lu drops=%u", atomic_load(&usb_link), atomic_load(&nat_ready),

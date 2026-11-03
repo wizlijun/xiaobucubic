@@ -4,5 +4,6 @@ managed_components/
 sdkconfig
 sdkconfig.old
 config.local.json
+app.local.json
 backups/
 __pycache__/

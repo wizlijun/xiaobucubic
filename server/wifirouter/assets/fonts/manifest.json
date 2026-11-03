@@ -1,0 +1,21 @@
+{
+  "converter": "lv_font_conv@1.5.3",
+  "sources": {
+    "NotoSansCJKsc-Regular.otf": {
+      "sha256": "2c76254f6fc379fddfce0a7e84fb5385bb135d3e399294f6eeb6680d0365b74b",
+      "url": "https://github.com/clocteck/holocubic-apps/tree/main/netease/src/vendor/fonts"
+    },
+    "LXGWWenKai-Regular.ttf": {
+      "sha256": "2d73eea94ad808999d90c0000c239a84a33b09d4bc6ab6c5b8bbf1eda8a7fc8b",
+      "url": "https://github.com/lxgw/LxgwWenKai/releases/tag/v1.530"
+    }
+  },
+  "codepoints": 7215,
+  "bpp": 2,
+  "sha256": {
+    "ui18.bin": "1d058b3a963a31a2a0fc53c9eb673fb995807598fbb3bf67711f9db4dd67b166",
+    "ui24.bin": "61c91d701cd90548f7c75a192dc596b4dc7b229e0009ef331a8875207026488f",
+    "wenkai24.bin": "19fca43443138363e8ae2fc7669e64c50287b7a6b7c4251d998119153ad498dd",
+    "wenkai32.bin": "b32b3ffa9b2142bf8fe633f6b31cf26213a58b80a2364a7a0092b97c51a4fc6c"
+  }
+}

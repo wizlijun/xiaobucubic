@@ -1,0 +1,7 @@
+{
+  "api_url": "https://your-service.example/v1/display",
+  "read_token": "",
+  "refresh_seconds": 60,
+  "rotate_seconds": 15,
+  "auto_rotate": true
+}
