@@ -1,6 +1,6 @@
-idf_component_register(SRCS "router.c" "display.c" "app_runtime.c" "app_model.c" "app_ui.c" INCLUDE_DIRS "." "${CMAKE_CURRENT_BINARY_DIR}"
+idf_component_register(SRCS "router.c" "display.c" "board.c" "qualia_expander.c" "app_runtime.c" "app_model.c" "app_ui.c" "scaled_font.c" INCLUDE_DIRS "." "${CMAKE_CURRENT_BINARY_DIR}"
     PRIV_REQUIRES esp_wifi esp_netif esp_event nvs_flash esp_http_server esp_timer json esp_lcd esp_psram
-        spiffs esp_http_client mbedtls esp_driver_i2c)
+        spiffs esp_http_client mbedtls esp_driver_i2c esp_driver_ledc esp_io_expander)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${PROJECT_DIR}/config.local.json" "${PROJECT_DIR}/scripts/configure.py")
 execute_process(COMMAND "${PYTHON}" "${PROJECT_DIR}/scripts/configure.py"
@@ -8,6 +8,12 @@ execute_process(COMMAND "${PYTHON}" "${PROJECT_DIR}/scripts/configure.py"
     RESULT_VARIABLE CONFIG_RESULT)
 if(NOT CONFIG_RESULT EQUAL 0)
     message(FATAL_ERROR "Invalid/missing config.local.json; see README.md")
+endif()
+
+if(CONFIG_APP_PNG_RGB565_DITHER)
+    target_sources(${COMPONENT_LIB} PRIVATE "image_quantize.c" "png_quantize.c")
+    target_link_libraries(${COMPONENT_LIB} INTERFACE
+        "-Wl,--wrap=lodepng_decode32" "-Wl,-u,__wrap_lodepng_decode32")
 endif()
 
 set(APP_SOURCE "${PROJECT_DIR}/../../apps/xiaobucubic/package")
@@ -29,3 +35,10 @@ target_include_directories(${LVGL_LIB} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_compile_definitions(${LVGL_LIB} PUBLIC
     LV_MEM_CUSTOM_INCLUDE="app_memory.h"
     LV_MEM_CUSTOM_ALLOC=app_lv_malloc LV_MEM_CUSTOM_REALLOC=app_lv_realloc LV_MEM_CUSTOM_FREE=app_lv_free)
+if(CONFIG_BOARD_QUALIA_5800 AND CONFIG_LV_DITHER_GRADIENT)
+    # LVGL 8.3.11's ordered vertical dither adds +/-32 to 8-bit channels.
+    # Replace only that function with adjacent-RGB565-level quantization.
+    target_sources(${COMPONENT_LIB} PRIVATE "qualia_dither.c")
+    target_link_libraries(${COMPONENT_LIB} INTERFACE
+        "-Wl,--wrap=lv_dither_ordered_ver" "-Wl,-u,__wrap_lv_dither_ordered_ver")
+endif()

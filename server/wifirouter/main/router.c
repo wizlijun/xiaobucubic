@@ -226,6 +226,7 @@ static esp_err_t status_handler(httpd_req_t *req)
     cJSON_AddStringToObject(json, "usb_ip", addr);
     cJSON_AddStringToObject(json, "usb_gateway", gw);
     cJSON_AddNumberToObject(json, "uptime_seconds", esp_timer_get_time() / 1000000);
+    cJSON_AddNumberToObject(json, "reset_reason", esp_reset_reason());
     cJSON_AddNumberToObject(json, "free_heap", esp_get_free_heap_size());
     cJSON_AddNumberToObject(json, "tx_dropped", atomic_load(&tx_dropped));
     cJSON_AddNumberToObject(json, "rx_dropped", atomic_load(&rx_dropped));
@@ -327,6 +328,7 @@ void app_main(void)
     tinyusb_config_cdcacm_t cdc = { .cdc_port = TINYUSB_CDC_ACM_0 };
     ESP_ERROR_CHECK(tinyusb_cdcacm_init(&cdc));
     ESP_ERROR_CHECK(tinyusb_console_init(TINYUSB_CDC_ACM_0));
+    ESP_LOGI(TAG, "Boot reset reason=%d", esp_reset_reason());
     assert(xTaskCreate(usb_tx_task, "usb_tx", 4096, NULL, 5, NULL) == pdPASS);
     assert(xTaskCreate(dns_task, "ap_dns", 6144, NULL, 4, NULL) == pdPASS);
 

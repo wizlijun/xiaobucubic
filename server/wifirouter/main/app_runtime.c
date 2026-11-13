@@ -20,6 +20,9 @@
 #include "nvs_flash.h"
 #include "app_runtime.h"
 #include "app_ui.h"
+#include "board.h"
+#include "display_geometry.h"
+#include "ft6336_touch.h"
 
 static const char *TAG = "ap24_app";
 static app_view_t *view;
@@ -212,28 +215,52 @@ static void lifecycle_tick(void)
 static bool touch_read(uint16_t reg, void *data, size_t size)
 {
     uint8_t address[] = {reg >> 8, reg & 255};
+#if CONFIG_PANEL_YX40006ACT
+    return i2c_master_transmit_receive(touch, address + 1, 1, data, size, 20) == ESP_OK;
+#else
     return i2c_master_transmit_receive(touch, address, 2, data, size, 20) == ESP_OK;
+#endif
 }
 static void touch_init(void)
 {
-    /* Same GT911/SDA15/SCL7 wiring as the Waveshare 4-inch example. */
+    /* Shared with Qualia's LCD-control expander; owned by board.c. */
     i2c_master_bus_handle_t bus;
-    i2c_master_bus_config_t config = {.i2c_port = I2C_NUM_0, .sda_io_num = 15, .scl_io_num = 7,
-        .clk_source = I2C_CLK_SRC_DEFAULT, .glitch_ignore_cnt = 7, .flags.enable_internal_pullup = true};
-    if (i2c_new_master_bus(&config, &bus) != ESP_OK) return;
+    if (board_i2c_get(&bus) != ESP_OK) return;
+#if CONFIG_PANEL_YX40006ACT
+    /* FT6336U needs >=300 ms after power/reset before reporting touches. */
+    vTaskDelay(pdMS_TO_TICKS(300));
+    int address = i2c_master_probe(bus, 0x38, 30) == ESP_OK ? 0x38 : 0;
+#else
     int address = i2c_master_probe(bus, 0x5d, 30) == ESP_OK ? 0x5d : i2c_master_probe(bus, 0x14, 30) == ESP_OK ? 0x14 : 0;
-    if (!address) { i2c_del_master_bus(bus); return; }
+#endif
+    if (!address) return;
     i2c_device_config_t device = {.dev_addr_length = I2C_ADDR_BIT_LEN_7, .device_address = address, .scl_speed_hz = 400000};
-    if (i2c_master_bus_add_device(bus, &device, &touch) != ESP_OK) { i2c_del_master_bus(bus); return; }
+    if (i2c_master_bus_add_device(bus, &device, &touch) != ESP_OK) return;
+#if CONFIG_PANEL_YX40006ACT
+    uint8_t chip = 0;
+    if (!touch_read(0xa3, &chip, 1) || chip != 0x64) {
+        ESP_LOGW(TAG, "FT6336U identity unavailable (0x%02x)", chip);
+        i2c_master_bus_rm_device(touch); touch = NULL; return;
+    }
+    view->touch_available = true; ESP_LOGI(TAG, "FT6336U touch detected");
+#else
     char product[5] = {0};
     if (!touch_read(0x8140, product, 4) || strncmp(product, "911", 3)) {
-        i2c_master_bus_rm_device(touch); touch = NULL; i2c_del_master_bus(bus); return;
+        i2c_master_bus_rm_device(touch); touch = NULL; return;
     }
     view->touch_available = true; ESP_LOGI(TAG, "GT911 touch detected");
+#endif
 }
 static void touch_poll(void)
 {
     if (!touch) return;
+    int raw_x = 0, raw_y = 0;
+#if CONFIG_PANEL_YX40006ACT
+    uint8_t point[5];
+    bool down;
+    if (!touch_read(0x02, point, sizeof(point))) return;
+    if (!ft6336_decode(point, display_geometry, &down, &raw_x, &raw_y)) { pressed = false; return; }
+#else
     uint8_t status;
     if (!touch_read(0x814e, &status, 1) || !(status & 0x80)) return;
     uint8_t point[8];
@@ -241,18 +268,22 @@ static void touch_poll(void)
     if (down && !touch_read(0x814f, point, sizeof(point))) return;
     const uint8_t clear[] = {0x81, 0x4e, 0};
     if (i2c_master_transmit(touch, clear, sizeof(clear), 20) != ESP_OK) return;
+    if (down) { raw_x = point[1] | point[2] << 8; raw_y = point[3] | point[4] << 8; }
+#endif
     if (down) {
-        int raw_x = point[1] | point[2] << 8, raw_y = point[3] | point[4] << 8;
-        if (raw_x >= 480 || raw_y >= 480) return;
         /* Match the panel's hardware 180-degree rotation for taps/swipes. */
-        last_x = 479 - raw_x; last_y = 479 - raw_y;
+        if (!display_touch_rotate_180(display_geometry, raw_x, raw_y, &last_x, &last_y)) return;
+#if CONFIG_APP_FRAME_ROTATE_180
+        /* Map panel coordinates back through the additional frame rotation. */
+        if (!display_touch_rotate_180(display_geometry, last_x, last_y, &last_x, &last_y)) return;
+#endif
         if (!pressed) { start_x = last_x; start_y = last_y; press_time = mono(); }
     } else if (pressed) {
         int dx = last_x - start_x, dy = last_y - start_y;
         if (mono() - press_time >= 3) key_press(6); /* Original Home / exit. */
-        else if (abs(dx) > 50 && abs(dx) > abs(dy)) key_press(dx > 0 ? 3 : 2);
-        else if (abs(dy) > 50) key_press(dy > 0 ? 5 : 4);
-        else key_press(start_y > 430 ? 5 : start_x < 70 ? 2 : start_x > 410 ? 3 : 4);
+        else if (abs(dx) > display_scale_480(display_geometry.width, 50) && abs(dx) > abs(dy)) key_press(dx > 0 ? 3 : 2);
+        else if (abs(dy) > display_scale_480(display_geometry.height, 50)) key_press(dy > 0 ? 5 : 4);
+        else key_press(display_tap_key(display_geometry, start_x, start_y));
     }
     pressed = down;
 }
@@ -288,6 +319,11 @@ static void update_status(const char *state)
         cJSON_AddBoolToObject(j, "cache_available", cache_ready);
         cJSON_AddBoolToObject(j, "has_snapshot", view->snapshot != NULL);
         cJSON_AddBoolToObject(j, "touch_available", view->touch_available);
+#if CONFIG_PANEL_YX40006ACT
+        cJSON_AddStringToObject(j, "touch_controller", "FT6336U");
+#else
+        cJSON_AddStringToObject(j, "touch_controller", "GT911");
+#endif
         app_ui_add_metrics(j);
     }
     char *text = cJSON_PrintUnformatted(j); cJSON_Delete(j);

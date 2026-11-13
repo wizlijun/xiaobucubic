@@ -1,5 +1,5 @@
 /* Layout and styles translated from apps/xiaobucubic/package/main.lua.
-   Coordinates remain in the original 320x240 design space; 480x480 output
+   Coordinates remain in the original 320x240 design space; physical output
    scales layout and uses screen-sized fonts with measured text fitting. */
 #include <math.h>
 #include <stdio.h>
@@ -15,12 +15,19 @@
 #include "freertos/semphr.h"
 #include "lvgl.h"
 #include "app_ui.h"
+#include "display_geometry.h"
+#include "scaled_font.h"
+#include "font_stream.h"
+#include "frame_rotate.h"
 
 enum { BG=0x070C12, PANEL=0x111C28, TEXT=0xF0F5FC, MUTED=0x8497AC,
        MINT=0x6DE1C2, BLUE=0x83B6FF, AMBER=0xFFC078, YELLOW=0xFFD166, RED=0xFF5F6D };
 typedef struct { char id[64]; lv_obj_t *obj, *parent; bool seen; } node_t;
 static node_t nodes[96];
 static lv_font_t *fonts[4];
+#if CONFIG_PANEL_YX40006ACT
+static lv_font_t scaled_fonts[4];
+#endif
 static const lv_font_t *small, *medium, *message_font, *message_compact;
 static lv_obj_t *root;
 static int current_page = -1;
@@ -34,48 +41,58 @@ static StaticSemaphore_t frame_boundary_storage;
 static atomic_uint rgb_vsyncs, rgb_frame_completions, max_vsync_gap_us;
 static int64_t previous_vsync_us;
 static uint32_t presented_frames, frame_wait_timeouts, render_us, max_render_us, flip_us;
+#if CONFIG_APP_FRAME_ROTATE_180
+static uint32_t rotation_us;
+_Static_assert(sizeof(lv_color_t) == sizeof(uint16_t), "Rotation requires RGB565");
+#endif
 static int message_font_px = 32;
-typedef struct { const uint8_t *data; uint32_t size, position; } font_file_t;
-static font_file_t font_blob;
 static void *font_open(lv_fs_drv_t *drv, const char *path, lv_fs_mode_t mode)
 {
-    if (mode != LV_FS_MODE_RD || !font_blob.data) return NULL;
-    font_file_t *file = malloc(sizeof(*file));
-    if (file) *file = font_blob;
+    if (mode != LV_FS_MODE_RD) return NULL;
+    struct stat st;
+    if (stat(path, &st) || st.st_size <= 0 || st.st_size > 2 * 1024 * 1024) return NULL;
+    font_stream_t *file = calloc(1, sizeof(*file));
+    if (!file) return NULL;
+    file->file = fopen(path, "rb");
+    file->capacity = 32768;
+    file->cache = heap_caps_malloc(file->capacity, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!file->file || !file->cache) {
+        if (file->file) fclose(file->file);
+        free(file->cache); free(file); return NULL;
+    }
+    file->size = st.st_size;
     return file;
 }
-static lv_fs_res_t font_close(lv_fs_drv_t *drv, void *file) { free(file); return LV_FS_RES_OK; }
+static lv_fs_res_t font_close(lv_fs_drv_t *drv, void *handle)
+{
+    font_stream_t *file = handle;
+    fclose(file->file); free(file->cache); free(file); return LV_FS_RES_OK;
+}
 static lv_fs_res_t font_read(lv_fs_drv_t *drv, void *handle, void *buffer, uint32_t count, uint32_t *read)
 {
-    font_file_t *file = handle;
-    *read = count < file->size - file->position ? count : file->size - file->position;
-    memcpy(buffer, file->data + file->position, *read); file->position += *read; return LV_FS_RES_OK;
+    return font_stream_read(handle, buffer, count, read) ? LV_FS_RES_OK : LV_FS_RES_FS_ERR;
 }
 static lv_fs_res_t font_seek(lv_fs_drv_t *drv, void *handle, uint32_t position, lv_fs_whence_t whence)
 {
-    font_file_t *file = handle;
+    font_stream_t *file = handle;
     uint64_t target = whence == LV_FS_SEEK_SET ? position : whence == LV_FS_SEEK_CUR ? (uint64_t)file->position + position : (uint64_t)file->size + position;
-    if (target > file->size) return LV_FS_RES_INV_PARAM;
-    file->position = target; return LV_FS_RES_OK;
+    return font_stream_seek(file, target) ? LV_FS_RES_OK : LV_FS_RES_INV_PARAM;
 }
-static lv_fs_res_t font_tell(lv_fs_drv_t *drv, void *handle, uint32_t *position) { *position = ((font_file_t *)handle)->position; return LV_FS_RES_OK; }
+static lv_fs_res_t font_tell(lv_fs_drv_t *drv, void *handle, uint32_t *position) { *position = ((font_stream_t *)handle)->position; return LV_FS_RES_OK; }
 static lv_font_t *load_font(const char *path)
 {
-    /* LVGL's binary loader does thousands of tiny seeks. Read flash once,
-       then parse the unchanged font in PSRAM through a temporary LVGL drive. */
-    struct stat st;
-    if (stat(path, &st) || st.st_size <= 0 || st.st_size > 2 * 1024 * 1024) return NULL;
-    FILE *f = fopen(path, "rb");
-    if (!f) return NULL;
-    uint8_t *bytes = heap_caps_malloc(st.st_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    size_t read = bytes ? fread(bytes, 1, st.st_size, f) : 0; fclose(f);
-    if (read != st.st_size) { free(bytes); return NULL; }
-    font_blob = (font_file_t){bytes, st.st_size, 0};
-    lv_font_t *font = lv_font_load("M:font");
-    font_blob.data = NULL; free(bytes); return font;
+    char source[128];
+    if (snprintf(source, sizeof(source), "M:%s", path) >= sizeof(source)) return NULL;
+    ESP_LOGI("ap24_ui", "Loading font %s; PSRAM free=%u largest=%u", path,
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM));
+    lv_font_t *font = lv_font_load(source);
+    ESP_LOGI("ap24_ui", "Font %s: %s; PSRAM free=%u", path, font ? "loaded" : "failed",
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+    return font;
 }
-static int px(double x) { return (int)floor(x * 1.5 + .5); }
-static int py(double y) { return (int)floor(y * 2.0 + .5); }
+static int px(double x) { return display_layout_x(display_geometry, x); }
+static int py(double y) { return display_layout_y(display_geometry, y); }
 
 /* LVGL 8 refreshes styles even for equal assignments. Match the original
    Lua property cache so unchanged data does not invalidate the whole screen. */
@@ -90,6 +107,9 @@ STYLE_NUMBER(bg_opa, LV_STYLE_BG_OPA) STYLE_NUMBER(border_width, LV_STYLE_BORDER
 STYLE_NUMBER(radius, LV_STYLE_RADIUS)
 STYLE_NUMBER(text_align, LV_STYLE_TEXT_ALIGN) STYLE_NUMBER(text_line_space, LV_STYLE_TEXT_LINE_SPACE)
 STYLE_NUMBER(bg_grad_dir, LV_STYLE_BG_GRAD_DIR) STYLE_NUMBER(bg_main_stop, LV_STYLE_BG_MAIN_STOP) STYLE_NUMBER(bg_grad_stop, LV_STYLE_BG_GRAD_STOP)
+#if CONFIG_BOARD_QUALIA_5800 && LV_DITHER_GRADIENT
+STYLE_NUMBER(bg_dither_mode, LV_STYLE_BG_DITHER_MODE)
+#endif
 #define STYLE_COLOR(name, prop) static void cached_##name(lv_obj_t *o, lv_color_t v, int selector) { cached_style(o, prop, (lv_style_value_t){.color = v}); }
 STYLE_COLOR(bg_color, LV_STYLE_BG_COLOR) STYLE_COLOR(bg_grad_color, LV_STYLE_BG_GRAD_COLOR) STYLE_COLOR(text_color, LV_STYLE_TEXT_COLOR)
 static void cached_text_font(lv_obj_t *o, const lv_font_t *font, int selector) { cached_style(o, LV_STYLE_TEXT_FONT, (lv_style_value_t){.ptr = font}); }
@@ -130,7 +150,9 @@ static lv_obj_t *box(const char *id, lv_obj_t *parent, double x, double y, doubl
     lv_obj_t *o = node(id, 0, parent);
     lv_obj_set_pos(o, px(x), py(y)); lv_obj_set_size(o, px(w), py(h));
     lv_obj_set_style_bg_color(o, lv_color_hex(color), 0); lv_obj_set_style_bg_opa(o, opacity, 0);
-    lv_obj_set_style_border_width(o, 0, 0); lv_obj_set_style_radius(o, radius, 0); lv_obj_set_style_pad_all(o, 0, 0);
+    lv_obj_set_style_border_width(o, 0, 0);
+    lv_obj_set_style_radius(o, display_scale_480(display_geometry.width, radius), 0);
+    lv_obj_set_style_pad_all(o, 0, 0);
     return o;
 }
 static lv_obj_t *label(const char *id, lv_obj_t *parent, int x, int y, int w, int h, const char *text,
@@ -174,6 +196,9 @@ static void gradient(lv_obj_t *o, uint32_t color, double weight)
     lv_obj_set_style_bg_grad_color(o, lv_color_hex(mix(PANEL, color, weight)), 0);
     lv_obj_set_style_bg_grad_dir(o, LV_GRAD_DIR_VER, 0);
     lv_obj_set_style_bg_main_stop(o, 0, 0); lv_obj_set_style_bg_grad_stop(o, 255, 0);
+#if CONFIG_BOARD_QUALIA_5800 && LV_DITHER_GRADIENT
+    cached_bg_dither_mode(o, LV_DITHER_ORDERED, 0);
+#endif
 }
 static const char *num(char out[32], double n, const char *suffix)
 {
@@ -204,7 +229,11 @@ static void weather_background(const app_view_t *s)
         if (!old || strcmp(old, src)) lv_img_set_src(img, src);
         /* The original artwork is 4:3; cover the square LCD and crop its
            sides so weather remains behind all three translucent cards. */
-        lv_img_set_pivot(img, 0, 0); lv_obj_set_pos(img, -80, 0); lv_img_set_zoom(img, 512);
+        int zoom = (int)ceil(fmax(display_geometry.width / 320.0, display_geometry.height / 240.0) * 256);
+        lv_img_set_pivot(img, 0, 0);
+        lv_obj_set_pos(img, (display_geometry.width - 320 * zoom / 256) / 2,
+                           (display_geometry.height - 240 * zoom / 256) / 2);
+        lv_img_set_zoom(img, zoom);
         box("background.shade", layer, 0, 0, 320, 240, BG, 0, 40); background = asset;
     } else background = NULL;
 }
@@ -345,12 +374,13 @@ static void reminder(app_view_t *s, int64_t now)
        preview. Keep short notes large; long notes use 24px with ellipsis
        only when even that size cannot fit. LVGL measures and wraps glyphs. */
     lv_point_t measured;
-    const int line_space = 6, body_width = px(276), body_height = py(158);
+    const int line_space = display_scale_480(display_geometry.height, 6);
+    const int body_width = px(276), body_height = py(158);
     note_layout(r->text, message_font, body_width, body_text);
     lv_txt_get_size(&measured, body_text, message_font, 0, line_space, body_width, LV_TEXT_FLAG_NONE);
     const lv_font_t *body_font = measured.y <= body_height ? message_font : message_compact;
     if (body_font != message_font) note_layout(r->text, body_font, body_width, body_text);
-    message_font_px = body_font == message_font ? 32 : 24;
+    message_font_px = display_scale_480(display_geometry.height, body_font == message_font ? 32 : 24);
     lv_obj_t *body = label("message.body", sheet, 22, 14, 276, 158, body_text, body_font, 0x30382D, LV_TEXT_ALIGN_LEFT, LV_LABEL_LONG_DOT);
     lv_obj_set_style_text_line_space(body, line_space, 0);
     if (r->due && now) {
@@ -384,9 +414,17 @@ static bool IRAM_ATTR frame_vsync(esp_lcd_panel_handle_t panel, const esp_lcd_rg
 static void flush(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t *pixels)
 {
     int64_t started = esp_timer_get_time();
+#if CONFIG_APP_FRAME_ROTATE_180
+    /* full_refresh repaints the entire inactive buffer before every flush.
+       Rotate once before submission, never touch the currently scanned frame.
+       The existing completion wait below protects reuse of the old frame. */
+    frame_rotate_rgb565_180(pixels, (size_t)drv->hor_res * drv->ver_res);
+    rotation_us = esp_timer_get_time() - started;
+    started = esp_timer_get_time();
+#endif
     /* pixels is one of the driver's two full-frame buffers, so this changes
        the pending buffer index without copying into the visible frame. */
-    esp_err_t error = esp_lcd_panel_draw_bitmap(lcd, 0, 0, 480, 480, pixels);
+    esp_err_t error = esp_lcd_panel_draw_bitmap(lcd, 0, 0, drv->hor_res, drv->ver_res, pixels);
     if (error != ESP_OK) ESP_LOGE("ap24_ui", "Frame submit failed: %s", esp_err_to_name(error));
     /* Discard acknowledgments before/during submission. The next callback
        occurs after the bounce driver has selected the new frame; only then
@@ -415,8 +453,9 @@ bool app_ui_init(esp_lcd_panel_handle_t panel, app_view_t *view)
     esp_lcd_rgb_panel_event_callbacks_t callbacks = {.on_frame_buf_complete = frame_complete, .on_vsync = frame_vsync};
     if (esp_lcd_rgb_panel_register_event_callbacks(panel, &callbacks, frame_boundary) != ESP_OK) return false;
     /* RGB starts with buffer zero: LVGL must draw buffer one first. */
-    lv_disp_draw_buf_init(&draw_buffer, back, front, 480 * 480);
-    lv_disp_drv_init(&driver); driver.hor_res = 480; driver.ver_res = 480;
+    lv_disp_draw_buf_init(&draw_buffer, back, front, display_frame_pixels(display_geometry));
+    lv_disp_drv_init(&driver);
+    driver.hor_res = display_geometry.width; driver.ver_res = display_geometry.height;
     driver.flush_cb = flush; driver.draw_buf = &draw_buffer; driver.full_refresh = 1;
     if (!lv_disp_drv_register(&driver)) return false;
     root = lv_scr_act();
@@ -427,6 +466,15 @@ bool app_ui_init(esp_lcd_panel_handle_t panel, app_view_t *view)
     medium = fonts[1] ? fonts[1] : &lv_font_montserrat_16;
     message_compact = fonts[2] ? fonts[2] : medium;
     message_font = fonts[3] ? fonts[3] : message_compact;
+#if CONFIG_PANEL_YX40006ACT
+    {
+        const lv_font_t *original[] = {small, medium, message_compact, message_font};
+        for (int i = 0; i < 4; ++i) app_font_scale_150(&scaled_fonts[i], original[i]);
+        small = &scaled_fonts[0]; medium = &scaled_fonts[1];
+        message_compact = &scaled_fonts[2]; message_font = &scaled_fonts[3];
+    }
+#endif
+    message_font_px = display_scale_480(display_geometry.height, 32);
     return view->fonts_loaded == 4;
 }
 void app_ui_render(app_view_t *s, int64_t now)
@@ -455,6 +503,22 @@ void app_ui_tick(uint32_t elapsed_ms)
 void app_ui_add_metrics(cJSON *object)
 {
     cJSON_AddStringToObject(object, "refresh_mode", "whole_frame_double_buffer");
+#if CONFIG_APP_PNG_RGB565_DITHER
+    cJSON_AddStringToObject(object, "image_quantization", "static_rgb565_error_diffusion");
+#else
+    cJSON_AddStringToObject(object, "image_quantization", "rgb565_truncate");
+#endif
+#if CONFIG_BOARD_QUALIA_5800 && LV_DITHER_GRADIENT
+    cJSON_AddStringToObject(object, "gradient_dither", "ordered_rgb565_adjacent_levels");
+#else
+    cJSON_AddStringToObject(object, "gradient_dither", "none");
+#endif
+#if CONFIG_APP_FRAME_ROTATE_180
+    cJSON_AddNumberToObject(object, "software_rotation_degrees", 180);
+    cJSON_AddNumberToObject(object, "rotation_ms", rotation_us / 1000.0);
+#else
+    cJSON_AddNumberToObject(object, "software_rotation_degrees", 0);
+#endif
     cJSON_AddNumberToObject(object, "presented_frames", presented_frames);
     cJSON_AddNumberToObject(object, "render_ms", render_us / 1000.0);
     cJSON_AddNumberToObject(object, "max_render_ms", max_render_us / 1000.0);
@@ -463,7 +527,7 @@ void app_ui_add_metrics(cJSON *object)
     cJSON_AddNumberToObject(object, "rgb_vsyncs", atomic_load_explicit(&rgb_vsyncs, memory_order_relaxed));
     cJSON_AddNumberToObject(object, "rgb_frame_completions", atomic_load_explicit(&rgb_frame_completions, memory_order_relaxed));
     cJSON_AddNumberToObject(object, "max_vsync_gap_ms", atomic_load_explicit(&max_vsync_gap_us, memory_order_relaxed) / 1000.0);
-    cJSON_AddStringToObject(object, "typography", "480px_adaptive_18_24_32");
+    cJSON_AddStringToObject(object, "typography", display_geometry.width == 720 ? "720px_scaled_27_36_48" : "480px_adaptive_18_24_32");
     cJSON_AddStringToObject(object, "message_font_family", "LXGW WenKai");
     cJSON_AddNumberToObject(object, "message_font_px", message_font_px);
 }

@@ -1,0 +1,11 @@
+CONFIG_BOARD_QUALIA_5800=y
+# CONFIG_BOARD_WAVESHARE_LCD is not set
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+# CONFIG_ESPTOOLPY_FLASHSIZE_8MB is not set
+# Leave more cache room for RGB prefetch alongside LVGL/font accesses.
+# Keep this experiment local to the normal Qualia profile; the static color
+# diagnostic retains its original 32 KB cache for comparison.
+CONFIG_ESP32S3_DATA_CACHE_64KB=y
+# CONFIG_ESP32S3_DATA_CACHE_32KB is not set
+CONFIG_LV_DITHER_GRADIENT=y
+# CONFIG_LV_DITHER_ERROR_DIFFUSION is not set

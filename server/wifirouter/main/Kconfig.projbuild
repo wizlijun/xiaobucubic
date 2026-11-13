@@ -1,0 +1,114 @@
+menu "xiaobucubic board"
+    choice XIAOBUCUBIC_BOARD
+        prompt "Display controller board"
+        default BOARD_WAVESHARE_LCD
+        config BOARD_WAVESHARE_LCD
+            bool "Waveshare ESP32-S3-LCD-Driver-Board"
+        config BOARD_QUALIA_5800
+            bool "Adafruit Qualia ESP32-S3 RGB666 (5800)"
+    endchoice
+    choice XIAOBUCUBIC_PANEL
+        prompt "LCD panel"
+        default PANEL_WAVESHARE_ST7701
+        config PANEL_WAVESHARE_ST7701
+            bool "Original Waveshare ST7701 480x480"
+        config PANEL_YX40006ACT
+            bool "Yousee YX40006ACT NV3052C 720x720 (factory settings bring-up)"
+            depends on BOARD_QUALIA_5800
+            help
+                Uses 40006A timing.txt and standard NV3052C wake commands.
+                The supplied package contains no panel-specific register table.
+                Requires correct factory-programmed settings; verify on hardware.
+    endchoice
+    config ST7701_PCLK_HZ
+        int "ST7701 480x480 pixel clock (Hz)"
+        depends on PANEL_WAVESHARE_ST7701
+        range 4000000 30000000
+        default 8000000
+        help
+            Existing H=8/10/50, V=3/8/8 timing uses 273452 clocks per frame.
+            8000000 Hz gives about 29.26 Hz; 16407120 Hz targets 60 Hz.
+            Higher rates require hardware validation under rendering load.
+    config YX40006ACT_PCLK_HZ
+        int "YX40006ACT pixel clock (Hz)"
+        depends on PANEL_YX40006ACT
+        range 8000000 35000000
+        default 35000000
+        help
+            Supplier-confirmed pixel clock from timing.png: 35 MHz.
+            This timing confirmation does not establish that flicker is fixed.
+    config YX40006ACT_PCLK_ACTIVE_NEG
+        bool "YX40006ACT output data on falling PCLK edge"
+        depends on PANEL_YX40006ACT
+        default y
+        help
+            Initial bring-up setting; panel samples on the opposite edge.
+            Supplier timing.txt does not specify the edge. Verify on hardware.
+    config YX40006ACT_ROTATE_180
+        bool "Rotate YX40006ACT 180 degrees from native scan orientation"
+        depends on PANEL_YX40006ACT
+        default y
+        help
+            Controls both SS and GS scan reversal bits in NV3052C MADCTR.
+            Disable to rotate 180 degrees relative to the initial bring-up
+            image. Physical upright direction depends on panel mounting.
+    config YX40006ACT_REFERENCE_TIMING
+        bool "Use supplier-confirmed timing.png porch values"
+        depends on PANEL_YX40006ACT
+        default y
+        help
+            Supplier confirmed H=2/44/46, V=2/18/16 at 35 MHz on 2026-11-13.
+            Values are sync pulse / back porch / front porch.
+            Disable only for legacy text-file comparison (H=6/25/25, V=2/17/20).
+    config QUALIA_BACKLIGHT_PWM
+        bool "Qualia A1/GPIO16 backlight PWM (requires soldered PWM jumper)"
+        depends on BOARD_QUALIA_5800
+        default n
+        help
+            Requires physical PWM solder bridge SJ7 and an unused A1 pin.
+            Releases PCA9554A P4 before enabling GPIO16 hardware PWM.
+            Without the bridge this setting cannot control backlight brightness.
+    config QUALIA_BACKLIGHT_PERCENT
+        int "Qualia backlight PWM duty percent"
+        depends on QUALIA_BACKLIGHT_PWM
+        range 1 100
+        default 50
+        help
+            20 kHz PWM controls the TPS61169 reference current. This is
+            duty cycle, not a measured percentage of perceived brightness.
+    config DISPLAY_COLOR_TEST
+        bool "Static RGB565 color/gray diagnostic (no app rendering)"
+        depends on BOARD_QUALIA_5800
+        default n
+    config APP_FRAME_ROTATE_180
+        bool "Rotate the completed application frame 180 degrees"
+        depends on PANEL_YX40006ACT && !DISPLAY_COLOR_TEST
+        default n
+        help
+            Reverse pixels in the inactive full-frame RGB565 buffer before
+            submitting it. Keeps the panel scan direction and timings intact.
+            Adds a memory pass per rendered frame, not per display scan.
+    config APP_PNG_RGB565_DITHER
+        bool "Preserve PNG gradients with static RGB565 error diffusion"
+        depends on PANEL_YX40006ACT && LV_USE_PNG && !DISPLAY_COLOR_TEST
+        default y
+        help
+            Quantize decoded 8-bit PNG channels using two small error rows.
+            Improves average color and reduces banding but does not increase
+            the Qualia board's native 16-bit color depth. No temporal dithering.
+    config DISPLAY_TEST_MIDGRAY
+        bool "Show uniform mid-gray instead of diagnostic color bars"
+        depends on DISPLAY_COLOR_TEST
+        default n
+        help
+            Fill both RGB565 buffers with 0x8410 and keep them immutable.
+            This isolates gray-level flicker from fonts, gradients and app load.
+    config DISPLAY_TEST_SRAM_ONLY
+        bool "Generate diagnostic gray in internal SRAM without a frame buffer"
+        depends on DISPLAY_TEST_MIDGRAY && PANEL_YX40006ACT
+        default n
+        help
+            Uses RGB bounce-buffer-only mode and an IRAM callback to generate
+            constant 0x8410 pixels. No display pixel data is read from PSRAM.
+            Other system code can still use PSRAM. App rendering is disabled.
+endmenu

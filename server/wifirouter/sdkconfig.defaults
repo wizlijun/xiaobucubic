@@ -18,7 +18,10 @@ CONFIG_SPIRAM_MODE_OCT=y
 CONFIG_SPIRAM_SPEED_80M=y
 CONFIG_SPIRAM_XIP_FROM_PSRAM=y
 CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
-CONFIG_LCD_RGB_RESTART_IN_VSYNC=y
+# The bounce driver already recovers missed DMA EOFs at VSYNC. Forcing a
+# restart every frame skips its EOF-counter reset in IDF 5.5.2 and can leave
+# the two bounce buffers out of phase after a delayed/missed interrupt.
+CONFIG_LCD_RGB_RESTART_IN_VSYNC=n
 CONFIG_LCD_RGB_ISR_IRAM_SAFE=y
 CONFIG_ESP32S3_DATA_CACHE_LINE_64B=y
 CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=n
