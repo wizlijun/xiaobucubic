@@ -28,6 +28,8 @@ targets:
         CODE_SIGN_ENTITLEMENTS: StandIt/StandIt$(STANDIT_ENTITLEMENTS_VARIANT).entitlements
         INFOPLIST_FILE: StandIt/Info.plist
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        # 设置里可换的图标颜色（便签配色），见 AppIconChoice
+        ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES: AppIcon-Green AppIcon-Pink AppIcon-Blue
     dependencies:
       - target: StandItWidget
   StandItWidget:

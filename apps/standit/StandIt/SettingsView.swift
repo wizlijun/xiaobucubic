@@ -11,6 +11,7 @@ struct SettingsView: View {
     @State private var message: String?
     @State private var saving = false
     @FocusState private var focus: Field?
+    @State private var icon: AppIconChoice = .yellow
 
     enum Field { case url, token }
 
@@ -44,6 +45,7 @@ struct SettingsView: View {
                 }
                 Text("接入点可填服务根地址或完整的 /v1/display 地址。接入点与 token 只保存在本机钥匙串中。")
                     .font(.system(.footnote, design: .rounded)).foregroundStyle(Palette.muted)
+                iconPicker
             }
             .padding(24)
             .frame(maxWidth: 560)
@@ -55,7 +57,47 @@ struct SettingsView: View {
             url = initial?.url.absoluteString ?? ""
             token = initial?.token ?? ""
             focus = initial == nil ? .url : nil
+            icon = AppIconChoice.current
         }
+    }
+
+    /// 图标颜色：便签的四组配色，点一下即换主屏图标。
+    private var iconPicker: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("图标颜色").font(.system(.subheadline, design: .rounded)).foregroundStyle(Palette.muted)
+            HStack(spacing: 16) {
+                ForEach(AppIconChoice.allCases) { choice in
+                    Button {
+                        Task {
+                            do {
+                                try await choice.apply()
+                                icon = choice
+                            } catch {
+                                message = "无法更换图标"
+                            }
+                        }
+                    } label: {
+                        VStack(spacing: 6) {
+                            VStack(spacing: 0) {
+                                Color(hex: choice.headerHex).frame(height: 14)
+                                Color(hex: choice.paperHex)
+                            }
+                            .frame(width: 56, height: 56)
+                            .clipShape(RoundedRectangle(cornerRadius: 13))
+                            .overlay(RoundedRectangle(cornerRadius: 16).stroke(icon == choice ? Palette.text : .clear, lineWidth: 2)
+                                .padding(-4))
+                            Text(choice.title).font(.system(.caption, design: .rounded))
+                                .foregroundStyle(icon == choice ? Palette.text : Palette.muted)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("\(choice.title)色图标")
+                    .accessibilityAddTraits(icon == choice ? .isSelected : [])
+                }
+            }
+            .padding(.leading, 4)
+        }
+        .padding(.top, 8)
     }
 
     private func field(_ title: String, text: Binding<String>, prompt: String, field: Field) -> some View {
