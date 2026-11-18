@@ -23,16 +23,16 @@ final class SnapshotCache {
     func load() -> CachedSnapshot? {
         guard let data = try? Data(contentsOf: file),
               let envelope = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
-              let received = envelope["received_at"] as? Double,
+              let received = envelope["received_at"] as? Int,
               let document = envelope["document"],
               let raw = try? JSONSerialization.data(withJSONObject: document),
               let snapshot = try? DisplayModel.normalize(raw) else { return nil }
-        return CachedSnapshot(snapshot: snapshot, receivedAt: Date(timeIntervalSince1970: received))
+        return CachedSnapshot(snapshot: snapshot, receivedAt: Date(timeIntervalSince1970: TimeInterval(received)))
     }
 
     func store(raw: Data, receivedAt: Date) {
         guard let document = try? JSONSerialization.jsonObject(with: raw),
-              let data = try? JSONSerialization.data(withJSONObject: ["received_at": receivedAt.timeIntervalSince1970,
+              let data = try? JSONSerialization.data(withJSONObject: ["received_at": Int(receivedAt.timeIntervalSince1970.rounded(.down)),
                                                                       "document": document]) else { return }
         try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
         // 锁屏（StandBy）时小组件也要能读。

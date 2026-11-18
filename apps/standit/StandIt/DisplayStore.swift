@@ -27,7 +27,8 @@ final class DisplayStore: ObservableObject {
         }
         do {
             let (snapshot, raw) = try await client.fetch(config)
-            let now = Date()
+            // 整秒：与缓存文件中的精度一致。
+            let now = Date(timeIntervalSince1970: Date().timeIntervalSince1970.rounded(.down))
             cache.store(raw: raw, receivedAt: now)
             cached = CachedSnapshot(snapshot: snapshot, receivedAt: now)
             error = nil
