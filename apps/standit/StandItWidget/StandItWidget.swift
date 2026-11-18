@@ -15,7 +15,7 @@ struct StandItWidget: Widget {
     }
 
     /// 尺寸越大，额度卡一次显示越多订阅。
-    static func quotaCount(_ family: WidgetFamily) -> Int {
+    nonisolated static func quotaCount(_ family: WidgetFamily) -> Int {
         switch family {
         case .systemSmall: 3
         case .systemLarge: 5
