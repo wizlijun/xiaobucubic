@@ -1,0 +1,4 @@
+// 团队与 Bundle 前缀写在 ../Local.xcconfig（Git 忽略），模板见 Local.xcconfig.example。
+STANDIT_TEAM =
+STANDIT_BUNDLE_PREFIX = cn.xiaobucubic
+#include? "../Local.xcconfig"

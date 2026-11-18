@@ -1,0 +1,68 @@
+name: StandIt
+options:
+  bundleIdPrefix: cn.xiaobucubic
+  deploymentTarget:
+    iOS: "26.0"
+  createIntermediateGroups: true
+configFiles:
+  Debug: Config/Base.xcconfig
+  Release: Config/Base.xcconfig
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    DEVELOPMENT_TEAM: $(STANDIT_TEAM)
+    CODE_SIGN_STYLE: Automatic
+    TARGETED_DEVICE_FAMILY: "1"
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "1"
+targets:
+  StandIt:
+    type: application
+    platform: iOS
+    sources:
+      - StandIt
+      - Shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(STANDIT_BUNDLE_PREFIX).standit
+        CODE_SIGN_ENTITLEMENTS: StandIt/StandIt.entitlements
+        INFOPLIST_FILE: StandIt/Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+    dependencies:
+      - target: StandItWidget
+  StandItWidget:
+    type: app-extension
+    platform: iOS
+    sources:
+      - StandItWidget
+      - Shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(STANDIT_BUNDLE_PREFIX).standit.widget
+        CODE_SIGN_ENTITLEMENTS: StandItWidget/StandItWidget.entitlements
+        INFOPLIST_FILE: StandItWidget/Info.plist
+  StandItTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - Tests
+      - path: ../xiaobucubic/examples/display.json
+        buildPhase: resources
+      - path: ../xiaobucubic/tests/fixtures/display-v1-extended.json
+        buildPhase: resources
+    dependencies:
+      - target: StandIt
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(STANDIT_BUNDLE_PREFIX).standit.tests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: $(BUILT_PRODUCTS_DIR)/StandIt.app/StandIt
+        BUNDLE_LOADER: $(TEST_HOST)
+schemes:
+  StandIt:
+    build:
+      targets:
+        StandIt: all
+        StandItTests: [test]
+    test:
+      targets: [StandItTests]
