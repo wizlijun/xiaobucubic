@@ -6,15 +6,30 @@ struct StandItWidgetBundle: WidgetBundle {
     var body: some Widget { StandItWidget() }
 }
 
-/// StandBy 左右两半之一：systemSmall。
+/// StandBy 左右两半之一：方形用 systemSmall；Duo 展开后的长条半屏试用 systemLarge / systemExtraLargePortrait。
 struct StandItWidget: Widget {
+    static var families: [WidgetFamily] {
+        var families: [WidgetFamily] = [.systemSmall, .systemLarge]
+        if #available(iOS 27.0, *) { families.append(.systemExtraLargePortrait) }
+        return families
+    }
+
+    /// 尺寸越大，额度卡一次显示越多订阅。
+    static func quotaCount(_ family: WidgetFamily) -> Int {
+        switch family {
+        case .systemSmall: 3
+        case .systemLarge: 5
+        default: 8
+        }
+    }
+
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: "StandItBoard", provider: BoardProvider()) { entry in
             WidgetCardView(entry: entry)
         }
         .configurationDisplayName("StandIt")
         .description("额度与便签轮播，适合放在待机的一半。")
-        .supportedFamilies([.systemSmall])
+        .supportedFamilies(Self.families)
     }
 }
 
@@ -32,7 +47,8 @@ struct BoardProvider: TimelineProvider {
 
     func getSnapshot(in context: Context, completion: @escaping (BoardEntry) -> Void) {
         let cached = SnapshotCache.shared.load()
-        let entry = WidgetTimeline.entries(cached: cached, error: nil, start: .now, minutes: 1)[0]
+        let entry = WidgetTimeline.entries(cached: cached, error: nil, start: .now, minutes: 1,
+                                           quotaCount: StandItWidget.quotaCount(context.family))[0]
         completion(BoardEntry(date: entry.0, card: entry.1, stale: nil))
     }
 
@@ -40,7 +56,8 @@ struct BoardProvider: TimelineProvider {
         Task {
             let start = Date()
             let (cached, error) = await Self.load(now: start)
-            let entries = WidgetTimeline.entries(cached: cached, error: error, start: start).map { date, card in
+            let entries = WidgetTimeline.entries(cached: cached, error: error, start: start,
+                                                quotaCount: StandItWidget.quotaCount(context.family)).map { date, card in
                 BoardEntry(date: date, card: card, stale: Self.staleLabel(cached, error: error, at: date))
             }
             completion(Timeline(entries: entries, policy: .after(start.addingTimeInterval(15 * 60))))

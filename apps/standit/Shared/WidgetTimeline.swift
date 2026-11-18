@@ -9,21 +9,22 @@ enum WidgetCard: Equatable {
 
 enum WidgetTimeline {
     /// 每分钟一条：额度、便签1、额度、便签2…；每条按自己的时刻过滤已过期便签。
-    static func entries(cached: CachedSnapshot?, error: FetchError?, start: Date, minutes: Int = 15) -> [(Date, WidgetCard)] {
+    static func entries(cached: CachedSnapshot?, error: FetchError?, start: Date, minutes: Int = 15,
+                        quotaCount: Int = 3) -> [(Date, WidgetCard)] {
         let base = start.timeIntervalSince1970.rounded(.down)
         return (0..<max(1, minutes)).map { i in
             let date = Date(timeIntervalSince1970: base + TimeInterval(i * 60))
-            return (date, card(at: i, date: date, cached: cached, error: error))
+            return (date, card(at: i, date: date, cached: cached, error: error, quotaCount: quotaCount))
         }
     }
 
-    private static func card(at i: Int, date: Date, cached: CachedSnapshot?, error: FetchError?) -> WidgetCard {
+    private static func card(at i: Int, date: Date, cached: CachedSnapshot?, error: FetchError?, quotaCount: Int) -> WidgetCard {
         if error == .notConfigured { return .message(FetchError.notConfigured.message) }
         guard let cached else { return .message(error?.message ?? "打开 StandIt 同步数据") }
         let snapshot = cached.snapshot
         let now = Int(date.timeIntervalSince1970)
         let notes = snapshot.messages.enumerated().filter { $0.element.expiresAt.map { $0 > now } ?? true }
-        guard i % 2 == 1, !notes.isEmpty else { return .quota(lowest(snapshot.subscriptions)) }
+        guard i % 2 == 1, !notes.isEmpty else { return .quota(lowest(snapshot.subscriptions, count: quotaCount)) }
         let pick = notes[(i / 2) % notes.count]
         return .note(pick.element, paper: pick.offset)
     }
@@ -42,4 +43,7 @@ enum WidgetTimeline {
     static func barWindow(_ sub: Subscription) -> QuotaWindow? { sub.windows.count > 1 ? sub.windows[1] : sub.windows.first }
 
     private static func lowestRemaining(_ sub: Subscription) -> Int? { sub.windows.compactMap(DisplayModel.remaining).min() }
+
+    /// 背景被系统去掉时是否由小组件自己画便签纸。
+    static func drawsOwnPaper(showsBackground: Bool, vibrant: Bool) -> Bool { !showsBackground && !vibrant }
 }

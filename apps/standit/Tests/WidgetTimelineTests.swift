@@ -79,9 +79,19 @@ final class WidgetTimelineTests: XCTestCase {
         XCTAssertNil(WidgetTimeline.barWindow(sub("none", [])))
     }
 
-    /// StandBy 白天会去掉小组件背景、铺黑底：此时便签文字必须改用浅色。
-    func testNoteInkWhenBackgroundRemoved() {
-        XCTAssertEqual(Palette.widgetNoteInk(showsBackground: true), Palette.noteText)
-        XCTAssertEqual(Palette.widgetNoteInk(showsBackground: false), Palette.text)
+    /// StandBy 白天会去掉小组件背景、铺黑底：全彩时便签纸由小组件自己画；夜间单色不画，免得刺眼。
+    func testWidgetDrawsOwnPaperWhenBackgroundRemoved() {
+        XCTAssertTrue(WidgetTimeline.drawsOwnPaper(showsBackground: false, vibrant: false))
+        XCTAssertFalse(WidgetTimeline.drawsOwnPaper(showsBackground: true, vibrant: false))
+        XCTAssertFalse(WidgetTimeline.drawsOwnPaper(showsBackground: false, vibrant: true))
+    }
+
+    /// 大尺寸（长条半屏）一次显示更多额度。
+    func testQuotaCountForLargerWidgets() {
+        let subs = (0..<8).map { sub("s\($0)", used: Double($0 * 10)) }
+        guard case .quota(let shown) = WidgetTimeline.entries(cached: cached(subs), error: nil, start: start,
+                                                              minutes: 1, quotaCount: 6)[0].1
+        else { return XCTFail() }
+        XCTAssertEqual(shown.map(\.id), ["s7", "s6", "s5", "s4", "s3", "s2"])
     }
 }

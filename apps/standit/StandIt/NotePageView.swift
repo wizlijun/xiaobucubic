@@ -17,10 +17,10 @@ struct NotePageView: View {
                 }
                 ViewThatFits(in: .vertical) {
                     ForEach(Self.scales, id: \.self) { k in
-                        Text(note.text).font(.system(size: s * k, weight: .medium, design: .rounded))
+                        Text(note.text).font(NoteFont.of(size: s * k))
                             .fixedSize(horizontal: false, vertical: true)
                     }
-                    Text(note.text).font(.system(size: s * Self.scales.last!, weight: .medium, design: .rounded))
+                    Text(note.text).font(NoteFont.of(size: s * Self.scales.last!))
                         .truncationMode(.tail)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
