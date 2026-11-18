@@ -19,7 +19,7 @@ final class WidgetTimelineTests: XCTestCase {
         entries.map {
             switch $0.1 {
             case .quota: "q"
-            case .note(let n, _): n.text
+            case .note(let n, _, _): n.text
             case .message(let m): "msg:" + m
             }
         }
@@ -42,6 +42,15 @@ final class WidgetTimelineTests: XCTestCase {
         let gone = WidgetTimeline.entries(cached: cached(notes: [Note(text: "x", expiresAt: t0)]), error: nil,
                                           start: start, minutes: 4)
         XCTAssertEqual(kinds(gone), ["q", "q", "q", "q"])
+    }
+
+    /// 便签卡带上在有效便签中的序号和总数，用于抬头“便签 · 2 / 3”。
+    func testNoteCardCarriesPositionAndCount() {
+        let notes = [Note(text: "a", expiresAt: t0 + 240), Note(text: "b"), Note(text: "c")]
+        let entries = WidgetTimeline.entries(cached: cached(notes: notes), error: nil, start: start, minutes: 6)
+        XCTAssertEqual(entries[1].1, .note(notes[0], paper: 0, count: 3))
+        XCTAssertEqual(entries[3].1, .note(notes[1], paper: 1, count: 3))
+        XCTAssertEqual(entries[5].1, .note(notes[1], paper: 0, count: 2))
     }
 
     func testNotConfiguredMessage() {

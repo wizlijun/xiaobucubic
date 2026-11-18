@@ -258,6 +258,20 @@ enum Format {
         return "\(left / 86400)天后到期"
     }
 
+    /// 便签抬头，如“便签 · 1 / 3”。
+    static func noteHeader(index: Int, count: Int) -> String { "便签 · \(index + 1) / \(count)" }
+
+    /// 便签底部小字，如“Bot · 重要 · 25分钟后”。
+    static func noteMeta(_ note: Note, now: Int) -> String {
+        var parts = note.isBot ? ["Bot"] : []
+        parts.append(note.priority == "high" ? "重要" : "备忘")
+        if let dueAt = note.dueAt {
+            let mins = Int((Double(dueAt - now) / 60).rounded(.up))
+            parts.append(mins <= 0 ? "已到提醒时间" : mins < 60 ? "\(mins)分钟后" : "\((mins + 59) / 60)小时后")
+        }
+        return parts.joined(separator: " · ")
+    }
+
     static func windowLabel(_ window: QuotaWindow?) -> String {
         guard let window else { return "暂无用量" }
         return window.label == "7天" ? "周限" : window.label

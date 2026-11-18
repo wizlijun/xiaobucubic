@@ -196,4 +196,15 @@ final class DisplayModelTests: XCTestCase {
         let back = try JSONDecoder().decode(DisplaySnapshot.self, from: JSONEncoder().encode(s))
         XCTAssertEqual(back, s)
     }
+
+    /// 抬头与底部小字照搬设备便签页（main.lua / app_ui.c）。
+    func testNoteHeaderAndMeta() {
+        let now = 1_792_664_580
+        XCTAssertEqual(Format.noteHeader(index: 0, count: 3), "便签 · 1 / 3")
+        XCTAssertEqual(Format.noteMeta(Note(text: "x"), now: now), "备忘")
+        XCTAssertEqual(Format.noteMeta(Note(text: "x", priority: "high", dueAt: now + 1500), now: now), "重要 · 25分钟后")
+        XCTAssertEqual(Format.noteMeta(Note(text: "x", dueAt: now + 7201), now: now), "备忘 · 3小时后")
+        XCTAssertEqual(Format.noteMeta(Note(text: "x", dueAt: now), now: now), "备忘 · 已到提醒时间")
+        XCTAssertEqual(Format.noteMeta(Note(text: "x", isBot: true), now: now), "Bot · 备忘")
+    }
 }

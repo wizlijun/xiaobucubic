@@ -7,16 +7,27 @@ struct WidgetCardView: View {
     let entry: BoardEntry
     @Environment(\.widgetRenderingMode) private var mode
     @Environment(\.showsWidgetContainerBackground) private var showsBackground
+    @Environment(\.widgetContentMargins) private var margins
 
     private var vibrant: Bool { mode != .fullColor }
 
     var body: some View {
         GeometryReader { geo in
             let k = min(3, max(1, min(geo.size.width, geo.size.height) / 130))
+            // 每种卡片各自一个身份、不做过渡：额度行不会渐变 / 叠到便签上。
             content(k).frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
+                .id(cardID).transition(.identity)
         }
         .containerBackground(for: .widget) {
-            if case .note(_, let paper) = entry.card { Palette.paper(paper) } else { Palette.panel }
+            if case .note(_, let paper, _) = entry.card { Palette.paper(paper) } else { Palette.panel }
+        }
+    }
+
+    private var cardID: String {
+        switch entry.card {
+        case .quota: "quota"
+        case .note(let note, _, _): "note-" + note.id
+        case .message: "message"
         }
     }
 
@@ -24,7 +35,7 @@ struct WidgetCardView: View {
     private func content(_ k: CGFloat) -> some View {
         switch entry.card {
         case .quota(let subs): quota(subs, k)
-        case .note(let note, let paper): noteView(note, paper: paper, k)
+        case .note(let note, let paper, let count): noteView(note, paper: paper, count: count, k)
         case .message(let text): message(text, k)
         }
     }
@@ -77,27 +88,36 @@ struct WidgetCardView: View {
         }
     }
 
-    /// 正文用文楷常规字重；StandBy 白天去掉背景时自己画便签纸，夜间单色模式不画。
-    private func noteView(_ note: Note, paper: Int, _ k: CGFloat) -> some View {
+    /// 照设备便签页：加深色抬头“便签 · i / n”、文楷常规正文、底部浅色小字。
+    /// 有系统背景时铺满整个小组件；StandBy 白天去掉背景时自己画圆角便签；夜间单色模式只留文字。
+    private func noteView(_ note: Note, paper: Int, count: Int, _ k: CGFloat) -> some View {
         let now = Int(entry.date.timeIntervalSince1970)
         let ownPaper = WidgetTimeline.drawsOwnPaper(showsBackground: showsBackground, vibrant: vibrant)
-        let tags = [note.priority == "high" ? (vibrant ? "⚠︎ 重要" : "● 重要") : nil, Format.due(note.dueAt, now: now)]
-            .compactMap { $0 }
-        return VStack(alignment: .leading, spacing: 6 * k) {
-            if note.title != "提醒" && !note.title.isEmpty {
-                Text(note.title).font(.system(size: 12 * k, weight: .semibold, design: .rounded)).opacity(0.65).lineLimit(1)
+        let pad = 12 * k
+        let card = VStack(alignment: .leading, spacing: 0) {
+            Text(Format.noteHeader(index: paper, count: count))
+                .font(.system(size: 12 * k, weight: .medium, design: .rounded)).lineLimit(1)
+                .padding(.horizontal, pad)
+                .frame(maxWidth: .infinity, minHeight: 26 * k, maxHeight: 26 * k, alignment: .leading)
+                .background(vibrant ? AnyShapeStyle(Color.primary.opacity(0.15)) : AnyShapeStyle(Palette.paperHeader(paper)))
+            VStack(alignment: .leading, spacing: 6 * k) {
+                Text(note.text).font(NoteFont.of(size: 22 * k))
+                    .minimumScaleFactor(0.5).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                Text(Format.noteMeta(note, now: now)).font(.system(size: 11 * k, design: .rounded)).lineLimit(1)
+                    .foregroundStyle(vibrant ? AnyShapeStyle(.secondary) : AnyShapeStyle(Palette.noteMuted))
             }
-            Text(note.text).font(NoteFont.of(size: 22 * k))
-                .minimumScaleFactor(0.5).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            if !tags.isEmpty {
-                Text(tags.joined(separator: "  ")).font(.system(size: 11 * k, weight: .bold, design: .rounded))
-                    .opacity(0.7).lineLimit(1)
-            }
+            .padding(pad)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background(ownPaper ? Palette.paper(paper) : .clear)
         }
         .foregroundStyle(vibrant ? Color.primary : Palette.noteText)
-        .padding(ownPaper ? 12 * k : 0)
-        .background {
-            if ownPaper { RoundedRectangle(cornerRadius: 18 * k).fill(Palette.paper(paper)) }
+        return Group {
+            if ownPaper {
+                card.clipShape(RoundedRectangle(cornerRadius: 18 * k))
+            } else {
+                card.padding(EdgeInsets(top: -margins.top, leading: -margins.leading,
+                                        bottom: -margins.bottom, trailing: -margins.trailing))
+            }
         }
     }
 
@@ -130,13 +150,13 @@ struct WidgetCardView: View {
     StandItWidget()
 } timeline: {
     BoardEntry(date: .now, card: .note(Note(title: "出门前", text: "带伞，傍晚有雷阵雨。", priority: "high",
-                                            dueAt: Int(Date().timeIntervalSince1970) + 1500), paper: 0))
+                                            dueAt: Int(Date().timeIntervalSince1970) + 1500), paper: 0, count: 2))
 }
 
 #Preview("便签 · 大号", as: .systemLarge) {
     StandItWidget()
 } timeline: {
-    BoardEntry(date: .now, card: .note(Note(text: "周五下午三点交周报，记得附上额度截图。"), paper: 1))
+    BoardEntry(date: .now, card: .note(Note(text: "周五下午三点交周报，记得附上额度截图。"), paper: 1, count: 2))
 }
 
 #Preview("提示", as: .systemSmall) {

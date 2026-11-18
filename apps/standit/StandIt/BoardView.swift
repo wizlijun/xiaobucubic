@@ -28,6 +28,7 @@ struct BoardView: View {
 }
 
 /// 纯展示：给定数据、时间、尺寸（来自 GeometryReader）和折痕，画出当前页。可直接用于预览和截图。
+/// 额度页照搬设备首页（天气图背景 + 顶部天气 + 额度条）；便签页只画便签，两者互斥，切页不做过渡动画。
 struct BoardContent: View {
     let cached: CachedSnapshot?
     let error: FetchError?
@@ -41,21 +42,37 @@ struct BoardContent: View {
         GeometryReader { geo in
             let size = geo.size
             let short = min(size.width, size.height)
-            let pad = max(10, short * 0.03)
-            let statusH = max(28, short * 0.05)
             ZStack(alignment: .topLeading) {
-                Palette.background
                 if let cached {
+                    let now = Int(date.timeIntervalSince1970)
+                    let snapshot = cached.snapshot
+                    let notes = DisplayModel.activeNotes(snapshot, now: now)
+                    let pages = BoardLayout.pages(cardCount: snapshot.subscriptions.count, perPage: HomeLayout.perPage,
+                                                  notes: notes.count)
+                    let current = pages[(pageOverride ?? Int(date.timeIntervalSince1970 / 15)) % pages.count]
+                    let quotaPages = pages.filter { if case .quota = $0 { true } else { false } }.count
                     if let (first, second) = BoardLayout.split(size, around: fold) {
-                        page(cached, in: first.insetBy(dx: pad, dy: pad), statusH: statusH, pad: pad, weather: false)
-                        WeatherPanel(weather: cached.snapshot.weather)
-                            .frame(width: second.width - pad * 2, height: second.height - pad * 2)
-                            .offset(x: second.minX + pad, y: second.minY + pad)
+                        // 半折叠：一半轮播额度 / 便签，另一半固定显示设备首页的天气。
+                        page(current, snapshot, notes: notes, quotaPages: quotaPages, now: now, size: first.size,
+                             weather: false)
+                            .frame(width: first.width, height: first.height).offset(x: first.minX, y: first.minY)
+                        let wu = min(second.width / 320, second.height / 80)
+                        ZStack(alignment: .topLeading) {
+                            HomeBackground(weather: snapshot.weather)
+                            HomeWeatherLine(weather: HomeWeather.make(snapshot.weather, now: now, ttl: snapshot.staleAfter),
+                                            u: wu, xs: second.width / 320)
+                                .offset(y: max(0, (second.height - 72 * wu) / 2))
+                        }
+                        .frame(width: second.width, height: second.height).clipped()
+                        .offset(x: second.minX, y: second.minY)
                     } else {
-                        page(cached, in: CGRect(origin: .zero, size: size).insetBy(dx: pad, dy: pad),
-                             statusH: statusH, pad: pad, weather: true)
+                        page(current, snapshot, notes: notes, quotaPages: quotaPages, now: now, size: size, weather: true)
                     }
+                    StatusIndicator(cached: cached, error: error, now: now, u: HomeMetrics.unit(size),
+                                    onSettings: onSettings)
+                        .frame(width: size.width, alignment: .trailing)
                 } else {
+                    Palette.background
                     VStack(spacing: short * 0.03) {
                         Text("StandIt").font(.system(size: short * 0.08, weight: .bold, design: .rounded))
                             .foregroundStyle(Palette.text)
@@ -63,81 +80,80 @@ struct BoardContent: View {
                             .foregroundStyle(error == nil ? Palette.muted : Palette.warning)
                     }
                     .frame(width: size.width, height: size.height)
-                    statusRow(nil, width: size.width - pad * 2, height: statusH)
-                        .offset(x: pad, y: pad)
+                    StatusIndicator(cached: nil, error: error, now: 0, u: HomeMetrics.unit(size), onSettings: onSettings)
+                        .frame(width: size.width, alignment: .trailing)
                 }
             }
+            .frame(width: size.width, height: size.height, alignment: .topLeading)
         }
     }
 
+    /// 一页：额度页铺满（含背景）；便签页在纯底色上留边距。用 id 区分页面，避免两页叠在一起过渡。
     @ViewBuilder
-    private func page(_ cached: CachedSnapshot, in rect: CGRect, statusH: CGFloat, pad: CGFloat, weather: Bool) -> some View {
-        let now = Int(date.timeIntervalSince1970)
-        let snapshot = cached.snapshot
-        let notes = DisplayModel.activeNotes(snapshot, now: now)
-        let main = CGRect(x: rect.minX, y: rect.minY + statusH + pad * 0.6, width: rect.width,
-                          height: max(0, rect.height - statusH - pad * 0.6))
-        let areas = Self.quotaAreas(main, gap: pad, weather: weather)
-        let perPage = BoardLayout.grid(count: snapshot.subscriptions.count, in: areas.grid.size).perPage
-        let pages = BoardLayout.pages(cardCount: snapshot.subscriptions.count, perPage: perPage, notes: notes.count)
-        let current = pages[(pageOverride ?? Int(date.timeIntervalSince1970 / 15)) % pages.count]
-
-        statusRow(cached, width: rect.width, height: statusH).offset(x: rect.minX, y: rect.minY)
-        switch current {
-        case .quota(let index):
-            if let w = areas.weather {
-                WeatherPanel(weather: snapshot.weather).frame(width: w.width, height: w.height).offset(x: w.minX, y: w.minY)
+    private func page(_ current: Page, _ snapshot: DisplaySnapshot, notes: [Note], quotaPages: Int, now: Int,
+                      size: CGSize, weather: Bool) -> some View {
+        let short = min(size.width, size.height)
+        let pad = max(10, short * 0.03)
+        ZStack(alignment: .topLeading) {
+            switch current {
+            case .quota(let index):
+                HomeBackground(weather: snapshot.weather)
+                HomePage(snapshot: snapshot, page: index, now: now, showsWeather: weather)
+            case .note(let index):
+                Palette.background
+                NotePageView(note: notes[index], paper: index, count: notes.count, now: now)
+                    .padding(.horizontal, pad).padding(.bottom, pad)
+                    .padding(.top, max(pad, 22 * HomeMetrics.unit(size)))
             }
-            QuotaGrid(subscriptions: snapshot.subscriptions, page: index, snapshot: snapshot, now: now)
-                .frame(width: areas.grid.width, height: areas.grid.height).offset(x: areas.grid.minX, y: areas.grid.minY)
-        case .note(let index):
-            NotePageView(note: notes[index], paper: index, now: now)
-                .frame(width: main.width, height: main.height).offset(x: main.minX, y: main.minY)
         }
+        .frame(width: size.width, height: size.height)
+        .clipped()
+        .id(current)
+        .transition(.identity)
+        .transaction { $0.animation = nil }
     }
+}
 
-    /// 横向：天气在左侧一栏；竖向：天气在顶部。
-    static func quotaAreas(_ main: CGRect, gap: CGFloat, weather: Bool) -> (weather: CGRect?, grid: CGRect) {
-        guard weather else { return (nil, main) }
-        switch BoardLayout.weatherPlacement(main.size) {
-        case .leading:
-            let w = (main.width * 0.32).rounded()
-            return (CGRect(x: main.minX, y: main.minY, width: w, height: main.height),
-                    CGRect(x: main.minX + w + gap, y: main.minY, width: main.width - w - gap, height: main.height))
-        case .top:
-            let h = (main.height * 0.3).rounded()
-            return (CGRect(x: main.minX, y: main.minY, width: main.width, height: h),
-                    CGRect(x: main.minX, y: main.minY + h + gap, width: main.width, height: main.height - h - gap))
-        }
-    }
+/// 右上角状态，照设备 network_indicator：小字，演示 / 错误 / 数据时间，最右是设置按钮。
+struct StatusIndicator: View {
+    let cached: CachedSnapshot?
+    let error: FetchError?
+    let now: Int
+    let u: CGFloat
+    var onSettings: (() -> Void)?
 
-    private func statusRow(_ cached: CachedSnapshot?, width: CGFloat, height: CGFloat) -> some View {
-        let now = Int(date.timeIntervalSince1970)
-        var badges: [(String, Color)] = []
-        if cached?.snapshot.demo == true { badges.append(("演示", Palette.card(2))) }
-        if let cached {
-            let received = Int(cached.receivedAt.timeIntervalSince1970)
-            if let error { badges.append((error.message, Palette.warning)) }
-            if error != nil || now - received > cached.snapshot.staleAfter {
-                badges.append(("数据时间 \(Format.clock(received))", Palette.muted))
+    var body: some View {
+        // 设备在右上角先显示连接状态，下一行“演示”；这里同样竖排，避免压到中间的城市名。
+        HStack(alignment: .top, spacing: 4 * u) {
+            VStack(alignment: .trailing, spacing: 3 * u) {
+                ForEach(Self.badges(cached, error: error, now: now), id: \.0) { text, color in
+                    Text(text).font(.system(size: 9 * u)).foregroundStyle(color).lineLimit(1)
+                }
             }
-        }
-        let font = Font.system(size: height * 0.5, weight: .semibold, design: .rounded)
-        return HStack(spacing: height * 0.4) {
-            ForEach(badges, id: \.0) { text, color in
-                Text(text).font(font).foregroundStyle(color).lineLimit(1)
-            }
-            Spacer(minLength: 0)
+            .padding(.top, 5 * u)
             if let onSettings {
                 Button(action: onSettings) {
-                    Image(systemName: "gearshape").font(.system(size: height * 0.55))
+                    Image(systemName: "gearshape").font(.system(size: 10 * u))
                         .foregroundStyle(Palette.muted.opacity(0.7))
-                        .frame(width: max(44, height), height: max(44, height))
+                        .frame(width: max(44, 16 * u), height: max(44, 16 * u))
                 }
                 .accessibilityLabel("设置")
             }
         }
-        .frame(width: width, height: height)
+        .padding(.trailing, 4 * u)
+    }
+
+    static func badges(_ cached: CachedSnapshot?, error: FetchError?, now: Int) -> [(String, Color)] {
+        var badges: [(String, Color)] = []
+        if cached?.snapshot.demo == true { badges.append(("演示", Palette.amber)) }
+        if let error { badges.append((error.message, Palette.warning)) }
+        if let cached {
+            let received = Int(cached.receivedAt.timeIntervalSince1970)
+            if error != nil || now - received > cached.snapshot.staleAfter {
+                badges.append(("数据时间 \(Format.clock(received))", Palette.muted))
+            }
+        }
+        return badges
     }
 }
 

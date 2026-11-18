@@ -3,7 +3,7 @@ import Foundation
 /// 小组件一张卡片：剩余最少的几个额度、一张便签，或一条提示。
 enum WidgetCard: Equatable {
     case quota([Subscription])
-    case note(Note, paper: Int)
+    case note(Note, paper: Int, count: Int)
     case message(String)
 }
 
@@ -23,10 +23,10 @@ enum WidgetTimeline {
         guard let cached else { return .message(error?.message ?? "打开 StandIt 同步数据") }
         let snapshot = cached.snapshot
         let now = Int(date.timeIntervalSince1970)
-        let notes = snapshot.messages.enumerated().filter { $0.element.expiresAt.map { $0 > now } ?? true }
+        let notes = DisplayModel.activeNotes(snapshot, now: now)
         guard i % 2 == 1, !notes.isEmpty else { return .quota(lowest(snapshot.subscriptions, count: quotaCount)) }
-        let pick = notes[(i / 2) % notes.count]
-        return .note(pick.element, paper: pick.offset)
+        let index = (i / 2) % notes.count
+        return .note(notes[index], paper: index, count: notes.count)
     }
 
     /// 按各窗口中最低的剩余取最少的 3 个；没有数据的排最后，同值保持原顺序。
