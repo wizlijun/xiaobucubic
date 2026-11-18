@@ -65,4 +65,23 @@ final class WidgetTimelineTests: XCTestCase {
         else { return XCTFail() }
         XCTAssertEqual(few.map(\.id), ["a", "none"])
     }
+
+    /// 按各窗口中最低的剩余排序：5 小时剩 80%、周限剩 3% 的订阅应排第一。
+    func testLowestUsesLowestWindow() {
+        func sub(_ id: String, _ used: [Double]) -> Subscription {
+            Subscription(id: id, name: id, source: "official", updatedAt: 0,
+                         windows: used.map { QuotaWindow(label: "w", usedPercent: $0) })
+        }
+        let subs = [sub("a", [50]), sub("b", [40]), sub("c", [30]), sub("claude", [20, 97])]
+        XCTAssertEqual(WidgetTimeline.lowest(subs).map(\.id), ["claude", "a", "b"])
+        XCTAssertEqual(WidgetTimeline.barWindow(sub("claude", [20, 97]))?.usedPercent, 97)
+        XCTAssertEqual(WidgetTimeline.barWindow(sub("a", [50]))?.usedPercent, 50)
+        XCTAssertNil(WidgetTimeline.barWindow(sub("none", [])))
+    }
+
+    /// StandBy 白天会去掉小组件背景、铺黑底：此时便签文字必须改用浅色。
+    func testNoteInkWhenBackgroundRemoved() {
+        XCTAssertEqual(Palette.widgetNoteInk(showsBackground: true), Palette.noteText)
+        XCTAssertEqual(Palette.widgetNoteInk(showsBackground: false), Palette.text)
+    }
 }

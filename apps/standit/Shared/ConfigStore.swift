@@ -9,14 +9,14 @@ struct EndpointConfig: Codable, Equatable {
 enum Endpoint {
     /// 用户粘贴的地址 → 完整的 `/v1/display` 地址；无法识别时返回 nil。
     static func normalize(_ raw: String) -> URL? {
-        var s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let scheme = URL(string: s)?.scheme?.lowercased(), ["http", "https"].contains(scheme),
-              URL(string: s)?.host?.isEmpty == false else { return nil }
-        if !s.hasSuffix("/v1/display") {
-            while s.hasSuffix("/") { s.removeLast() }
-            s += "/v1/display"
-        }
-        return URL(string: s)
+        let s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard var parts = URLComponents(string: s), let scheme = parts.scheme?.lowercased(),
+              ["http", "https"].contains(scheme), parts.host?.isEmpty == false else { return nil }
+        var path = parts.path
+        while path.hasSuffix("/") { path.removeLast() }
+        if !path.lowercased().hasSuffix("/v1/display") { path += "/v1/display" }
+        parts.path = path
+        return parts.url
     }
 }
 

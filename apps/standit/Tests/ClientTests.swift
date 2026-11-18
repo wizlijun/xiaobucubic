@@ -53,6 +53,22 @@ final class ClientTests: XCTestCase {
         XCTAssertNil(Endpoint.normalize("h:8007"))
     }
 
+    func testEndpointNormalizationKeepsExistingPath() {
+        XCTAssertEqual(Endpoint.normalize("http://h:8007/v1/display/")?.absoluteString, "http://h:8007/v1/display")
+        XCTAssertEqual(Endpoint.normalize("HTTP://h/V1/Display")?.absoluteString, "HTTP://h/V1/Display")
+        XCTAssertEqual(Endpoint.normalize("http://h/v1/display?x=1")?.absoluteString, "http://h/v1/display?x=1")
+        XCTAssertEqual(Endpoint.normalize("http://h/api?x=1")?.absoluteString, "http://h/api/v1/display?x=1")
+    }
+
+    /// 保存后只有鉴权失败留在设置页；连不上、服务报错都进看板，由看板重试并显示错误。
+    func testSaveEntersBoardUnlessUnauthorized() {
+        XCTAssertTrue(SaveOutcome.entersBoard(after: nil))
+        XCTAssertTrue(SaveOutcome.entersBoard(after: .network("timed out")))
+        XCTAssertTrue(SaveOutcome.entersBoard(after: .http(502)))
+        XCTAssertTrue(SaveOutcome.entersBoard(after: .invalid("坏数据")))
+        XCTAssertFalse(SaveOutcome.entersBoard(after: .unauthorized))
+    }
+
     func testBearerHeaderOnlyWithToken() async throws {
         let body = try demo
         StubProtocol.handler = { _ in (200, body) }

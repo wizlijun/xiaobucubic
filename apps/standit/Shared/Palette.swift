@@ -16,6 +16,8 @@ enum Palette {
     static let warning = Color(hex: 0xFFD166)
     static let critical = Color(hex: 0xFF5F6D)
     static let noteText = Color(hex: 0x30382D)
+    /// StandBy 去掉小组件背景时底色是黑的，便签文字改用浅色。
+    static func widgetNoteInk(showsBackground: Bool) -> Color { showsBackground ? noteText : text }
 
     private static let cards: [UInt32] = [0x6DE1C2, 0x83B6FF, 0xFFC078]
     private static let papers: [UInt32] = [0xFFF2A6, 0xDDEEB4, 0xF7B6B2, 0xB9DFF2]

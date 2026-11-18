@@ -58,3 +58,8 @@ extension FetchError {
         }
     }
 }
+
+/// 设置页保存后的去向。
+enum SaveOutcome {
+    static func entersBoard(after error: FetchError?) -> Bool { error != .unauthorized }
+}

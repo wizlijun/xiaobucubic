@@ -5,6 +5,7 @@ import WidgetKit
 struct WidgetCardView: View {
     let entry: BoardEntry
     @Environment(\.widgetRenderingMode) private var mode
+    @Environment(\.showsWidgetContainerBackground) private var showsBackground
 
     private var vibrant: Bool { mode != .fullColor }
 
@@ -19,7 +20,7 @@ struct WidgetCardView: View {
     private var content: some View {
         switch entry.card {
         case .quota(let subs): quota(subs)
-        case .note(let note, _): noteView(note)
+        case .note(let note, let paper): noteView(note, paper: paper)
         case .message(let text): message(text)
         }
     }
@@ -47,6 +48,8 @@ struct WidgetCardView: View {
     private func row(_ sub: Subscription, color: Int, now: Int) -> some View {
         let remaining = DisplayModel.remaining(sub.windows.first)
         let level = DisplayModel.quotaLevel(remaining)
+        let bar = DisplayModel.remaining(WidgetTimeline.barWindow(sub))
+        let barLevel = DisplayModel.quotaLevel(bar)
         let alert = level == .low || level == .critical
         let dim = sub.windows.first?.resetAt.map { now >= $0 } ?? false // 窗口已重置，数值作废
         return VStack(alignment: .leading, spacing: 2) {
@@ -59,20 +62,20 @@ struct WidgetCardView: View {
                     .foregroundStyle(vibrant ? Color.primary : dim ? Palette.muted : Palette.level(level) ?? Palette.text)
                     .lineLimit(1).minimumScaleFactor(0.6)
             }
-            GeometryReader { bar in
+            GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     Capsule().fill(vibrant ? Color.primary.opacity(0.2) : Palette.background)
-                    Capsule().fill(vibrant ? Color.primary : Palette.level(level) ?? Palette.card(color))
-                        .frame(width: bar.size.width * CGFloat(remaining ?? 0) / 100)
+                    Capsule().fill(vibrant ? Color.primary : Palette.level(barLevel) ?? Palette.card(color))
+                        .frame(width: geo.size.width * CGFloat(bar ?? 0) / 100)
                 }
             }
             .frame(height: 4)
         }
     }
 
-    private func noteView(_ note: Note) -> some View {
+    private func noteView(_ note: Note, paper: Int) -> some View {
         let now = Int(entry.date.timeIntervalSince1970)
-        let ink = vibrant ? Color.primary : Palette.noteText
+        let ink = vibrant ? Color.primary : Palette.widgetNoteInk(showsBackground: showsBackground)
         return VStack(alignment: .leading, spacing: 6) {
             if note.title != "提醒" && !note.title.isEmpty {
                 Text(note.title).font(.system(size: 12, weight: .semibold, design: .rounded)).opacity(0.65).lineLimit(1)
@@ -87,6 +90,11 @@ struct WidgetCardView: View {
             }
         }
         .foregroundStyle(ink)
+        .overlay(alignment: .topTrailing) { // 背景被去掉时用一角便签色标示
+            if !showsBackground && !vibrant {
+                Circle().fill(Palette.paper(paper)).frame(width: 10, height: 10)
+            }
+        }
     }
 
     private func message(_ text: String) -> some View {

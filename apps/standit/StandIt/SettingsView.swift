@@ -97,8 +97,9 @@ struct SettingsView: View {
             onSaved()
         } catch let error as FetchError {
             message = error == .unauthorized ? "鉴权失败：请检查 token" : "已保存，但\(error.message)"
+            if SaveOutcome.entersBoard(after: error) { onSaved() } // 进看板后由看板重试并显示错误
         } catch {
-            message = "已保存，但无法连接"
+            onSaved()
         }
     }
 }

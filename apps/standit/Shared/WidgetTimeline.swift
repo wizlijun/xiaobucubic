@@ -28,13 +28,18 @@ enum WidgetTimeline {
         return .note(pick.element, paper: pick.offset)
     }
 
-    /// 剩余最少的 3 个；没有数据的排最后，同值保持原顺序。
+    /// 按各窗口中最低的剩余取最少的 3 个；没有数据的排最后，同值保持原顺序。
     static func lowest(_ subs: [Subscription], count: Int = 3) -> [Subscription] {
         let ranked = subs.enumerated().sorted { a, b in
-            let ra = DisplayModel.remaining(a.element.windows.first) ?? Int.max
-            let rb = DisplayModel.remaining(b.element.windows.first) ?? Int.max
+            let ra = lowestRemaining(a.element) ?? Int.max
+            let rb = lowestRemaining(b.element) ?? Int.max
             return ra != rb ? ra < rb : a.offset < b.offset
         }
         return ranked.prefix(count).map(\.element)
     }
+
+    /// 细条显示的窗口：有次窗口用次窗口，否则主窗口。
+    static func barWindow(_ sub: Subscription) -> QuotaWindow? { sub.windows.count > 1 ? sub.windows[1] : sub.windows.first }
+
+    private static func lowestRemaining(_ sub: Subscription) -> Int? { sub.windows.compactMap(DisplayModel.remaining).min() }
 }
