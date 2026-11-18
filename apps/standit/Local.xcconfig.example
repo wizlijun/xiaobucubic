@@ -1,3 +1,6 @@
 // 复制为 Local.xcconfig 后填写；该文件不进 Git。
 STANDIT_TEAM = YOUR_TEAM_ID
 STANDIT_BUNDLE_PREFIX = com.example
+// 没有登录 Xcode 账号、无法开通 App Group 时取消下面两行注释：
+// STANDIT_APP_GROUP =
+// STANDIT_ENTITLEMENTS_VARIANT = -NoAppGroup

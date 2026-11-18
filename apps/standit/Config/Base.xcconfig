@@ -1,4 +1,9 @@
 // 团队与 Bundle 前缀写在 ../Local.xcconfig（Git 忽略），模板见 Local.xcconfig.example。
 STANDIT_TEAM =
 STANDIT_BUNDLE_PREFIX = cn.xiaobucubic
+// App Group 让 App 与小组件共用缓存。没有 Xcode 账号、只有通配开发描述文件时无法开通：
+// 在 Local.xcconfig 里置空 STANDIT_APP_GROUP 并设 STANDIT_ENTITLEMENTS_VARIANT = -NoAppGroup，
+// 此时小组件经共享钥匙串读取接入点，自己联网并缓存。
+STANDIT_APP_GROUP = group.$(STANDIT_BUNDLE_PREFIX).standit
+STANDIT_ENTITLEMENTS_VARIANT =
 #include? "../Local.xcconfig"
