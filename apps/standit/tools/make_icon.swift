@@ -33,11 +33,11 @@ ctx.setFillColor(rgb(0xFFF2A6)); ctx.fill(note)
 ctx.setFillColor(rgb(0xE2CA65)); ctx.fill(CGRect(x: note.minX, y: note.minY, width: note.width, height: header))
 ctx.restoreGState()
 
-// 纸面上的额度进度：浅色轨道 + 深一点的薄荷绿
+// 纸面上的额度进度：浅色轨道 + 便签字色
 let barH: CGFloat = 72, barX = note.minX + 80, barW = note.width - 160
 let barY = note.minY + header + (note.height - header - barH) / 2
 fillRound(CGRect(x: barX, y: barY, width: barW, height: barH), barH / 2, rgb(0x30382D, 0.12))
-fillRound(CGRect(x: barX, y: barY, width: barW * 0.62, height: barH), barH / 2, rgb(0x3FAF95))
+fillRound(CGRect(x: barX, y: barY, width: barW * 0.62, height: barH), barH / 2, rgb(0x30382D))
 
 let url = URL(fileURLWithPath: CommandLine.arguments[1])
 let dest = CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil)!
