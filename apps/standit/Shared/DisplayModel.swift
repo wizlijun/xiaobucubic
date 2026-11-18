@@ -242,6 +242,22 @@ enum Format {
         return prefix + String(format: "%02d:%02d重置", hour, minute)
     }
 
+    /// 固定时区（默认 UTC+8）的 HH:MM。
+    static func clock(_ ts: Int, offsetMinutes: Int = 480) -> String {
+        let seconds = mod(ts + offsetMinutes * 60, 86400)
+        return String(format: "%02d:%02d", seconds / 3600, seconds % 3600 / 60)
+    }
+
+    static func due(_ dueAt: Int?, now: Int) -> String? {
+        guard let dueAt else { return nil }
+        let left = dueAt - now
+        if left <= 0 { return "已到期" }
+        if left < 60 { return "1分钟内到期" }
+        if left < 3600 { return "\(left / 60)分钟后到期" }
+        if left < 86400 { return "\(left / 3600)小时后到期" }
+        return "\(left / 86400)天后到期"
+    }
+
     static func windowLabel(_ window: QuotaWindow?) -> String {
         guard let window else { return "暂无用量" }
         return window.label == "7天" ? "周限" : window.label

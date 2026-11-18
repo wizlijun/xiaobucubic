@@ -62,6 +62,21 @@ final class DisplayModelTests: XCTestCase {
         XCTAssertEqual(Format.windowLabel(nil), "暂无用量")
     }
 
+    func testClock() {
+        XCTAssertEqual(Format.clock(1792664580), "18:23")
+        XCTAssertEqual(Format.clock(1792664580, offsetMinutes: 0), "10:23")
+    }
+
+    func testDueText() {
+        let now = 1792664580
+        XCTAssertNil(Format.due(nil, now: now))
+        XCTAssertEqual(Format.due(now + 59, now: now), "1分钟内到期")
+        XCTAssertEqual(Format.due(now + 25 * 60, now: now), "25分钟后到期")
+        XCTAssertEqual(Format.due(now + 3 * 3600 + 60, now: now), "3小时后到期")
+        XCTAssertEqual(Format.due(now + 3 * 86400, now: now), "3天后到期")
+        XCTAssertEqual(Format.due(now, now: now), "已到期")
+    }
+
     // MARK: normalize
 
     func testDemoFixture() throws {

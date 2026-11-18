@@ -45,3 +45,16 @@ enum Backoff {
         failures <= 0 ? 60 : steps[min(failures, steps.count) - 1]
     }
 }
+
+extension FetchError {
+    /// 面向用户的简短说明（App 状态行与小组件共用）。
+    var message: String {
+        switch self {
+        case .notConfigured: "打开 StandIt 设置接入点"
+        case .unauthorized: "鉴权失败"
+        case .http(let code): "服务返回 \(code)"
+        case .invalid(let reason): reason
+        case .network: "无法连接"
+        }
+    }
+}

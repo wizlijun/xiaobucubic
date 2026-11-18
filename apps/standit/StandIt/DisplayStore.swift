@@ -40,5 +40,11 @@ final class DisplayStore: ObservableObject {
         }
     }
 
+    func reloadFromCache() {
+        cached = cache.load()
+        error = nil
+        failures = 0
+    }
+
     var nextDelay: TimeInterval { Backoff.delay(failures: failures) }
 }
