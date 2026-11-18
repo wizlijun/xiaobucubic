@@ -89,36 +89,36 @@ struct WidgetCardView: View {
     }
 
     /// 照设备便签页：加深色抬头“便签 · i / n”、文楷常规正文、底部浅色小字。
-    /// 有系统背景时铺满整个小组件；StandBy 白天去掉背景时自己画圆角便签；夜间单色模式只留文字。
+    /// 便签纸始终铺满整个小组件（与设备一样没有黑边）：有系统背景时用 containerBackground；
+    /// StandBy 白天去掉背景时自己画、按小组件外形裁切；夜间单色模式只留文字。
     private func noteView(_ note: Note, paper: Int, count: Int, _ k: CGFloat) -> some View {
         let now = Int(entry.date.timeIntervalSince1970)
         let ownPaper = WidgetTimeline.drawsOwnPaper(showsBackground: showsBackground, vibrant: vibrant)
-        let pad = 12 * k
-        let card = VStack(alignment: .leading, spacing: 0) {
+        let chrome = WidgetTimeline.noteChrome(k: k)
+        let inset = EdgeInsets(top: 0, leading: max(margins.leading, 10 * k), bottom: max(margins.bottom, 8 * k),
+                               trailing: max(margins.trailing, 10 * k))
+        return VStack(alignment: .leading, spacing: 0) {
             Text(Format.noteHeader(index: paper, count: count))
-                .font(.system(size: 12 * k, weight: .medium, design: .rounded)).lineLimit(1)
-                .padding(.horizontal, pad)
-                .frame(maxWidth: .infinity, minHeight: 26 * k, maxHeight: 26 * k, alignment: .leading)
+                .font(.system(size: chrome.header, weight: .medium, design: .rounded)).lineLimit(1)
+                .padding(.leading, inset.leading).padding(.top, margins.top * 0.5)
+                .frame(maxWidth: .infinity, minHeight: chrome.headerHeight + margins.top * 0.5,
+                       maxHeight: chrome.headerHeight + margins.top * 0.5, alignment: .leading)
                 .background(vibrant ? AnyShapeStyle(Color.primary.opacity(0.15)) : AnyShapeStyle(Palette.paperHeader(paper)))
-            VStack(alignment: .leading, spacing: 6 * k) {
+            VStack(alignment: .leading, spacing: 4 * k) {
                 Text(note.text).font(NoteFont.of(size: 22 * k))
                     .minimumScaleFactor(0.5).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                Text(Format.noteMeta(note, now: now)).font(.system(size: 11 * k, design: .rounded)).lineLimit(1)
+                Text(Format.noteMeta(note, now: now)).font(.system(size: chrome.meta, design: .rounded)).lineLimit(1)
                     .foregroundStyle(vibrant ? AnyShapeStyle(.secondary) : AnyShapeStyle(Palette.noteMuted))
             }
-            .padding(pad)
+            .padding(.top, 8 * k).padding(.leading, inset.leading).padding(.trailing, inset.trailing)
+            .padding(.bottom, inset.bottom)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .background(ownPaper ? Palette.paper(paper) : .clear)
         }
         .foregroundStyle(vibrant ? Color.primary : Palette.noteText)
-        return Group {
-            if ownPaper {
-                card.clipShape(RoundedRectangle(cornerRadius: 18 * k))
-            } else {
-                card.padding(EdgeInsets(top: -margins.top, leading: -margins.leading,
-                                        bottom: -margins.bottom, trailing: -margins.trailing))
-            }
-        }
+        .background(ownPaper ? Palette.paper(paper) : .clear)
+        .clipShape(ContainerRelativeShape())
+        .padding(EdgeInsets(top: -margins.top, leading: -margins.leading,
+                            bottom: -margins.bottom, trailing: -margins.trailing))
     }
 
     private func message(_ text: String, _ k: CGFloat) -> some View {

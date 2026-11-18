@@ -12,6 +12,14 @@ enum BoardLayout {
         return (0..<quotaPages).map { .quota(index: $0) } + (0..<max(0, notes)).map { .note(index: $0) }
     }
 
+    /// 分屏：有折痕沿折痕分；横屏无折痕左右各半；竖屏不分。
+    static func halves(_ size: CGSize, fold: CGRect?) -> (CGRect, CGRect)? {
+        if let parts = split(size, around: fold) { return parts }
+        guard size.width > size.height else { return nil }
+        let w = size.width / 2
+        return (CGRect(x: 0, y: 0, width: w, height: size.height), CGRect(x: w, y: 0, width: w, height: size.height))
+    }
+
     /// 折痕把区域分成两块（不含折痕本身）；无折痕返回 nil。
     static func split(_ size: CGSize, around fold: CGRect?) -> (CGRect, CGRect)? {
         guard let fold, !fold.isEmpty else { return nil }

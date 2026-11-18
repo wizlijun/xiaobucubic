@@ -103,4 +103,12 @@ final class WidgetTimelineTests: XCTestCase {
         else { return XCTFail() }
         XCTAssertEqual(shown.map(\.id), ["s7", "s6", "s5", "s4", "s3", "s2"])
     }
+
+    func testWidgetNoteChromeIsSmall() {
+        // StandBy 半屏 k≈3：抬头 24pt（高度按设备 29:12），底部小字 21pt
+        let c = WidgetTimeline.noteChrome(k: 3)
+        XCTAssertEqual(c.header, 24)
+        XCTAssertEqual(c.headerHeight, 58)
+        XCTAssertEqual(c.meta, 21)
+    }
 }

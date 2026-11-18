@@ -7,12 +7,22 @@ struct BoardView: View {
     var onSettings: () -> Void
     @Environment(\.scenePhase) private var scenePhase
     @State private var fold: CGRect?
+    /// 设置按钮平时隐藏，点屏幕后显示 5 秒。
+    @State private var showsSettings = false
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 15)) { context in
             BoardContent(cached: store.cached, error: store.error, date: context.date, fold: fold,
-                         onSettings: onSettings)
+                         onSettings: showsSettings ? onSettings : nil)
                 .background(FoldReader(tick: context.date) { if fold != $0 { fold = $0 } })
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { showsSettings = true }
+        .accessibilityAction(named: "设置", onSettings)
+        .task(id: showsSettings) {
+            guard showsSettings else { return }
+            try? await Task.sleep(for: .seconds(5))
+            if !Task.isCancelled { showsSettings = false }
         }
         .background(Palette.background.ignoresSafeArea())
         .task(id: scenePhase) {
@@ -47,28 +57,36 @@ struct BoardContent: View {
                     let now = Int(date.timeIntervalSince1970)
                     let snapshot = cached.snapshot
                     let notes = DisplayModel.activeNotes(snapshot, now: now)
-                    let pages = BoardLayout.pages(cardCount: snapshot.subscriptions.count, perPage: HomeLayout.perPage,
-                                                  notes: notes.count)
-                    let current = pages[(pageOverride ?? Int(date.timeIntervalSince1970 / 15)) % pages.count]
-                    let quotaPages = pages.filter { if case .quota = $0 { true } else { false } }.count
-                    if let (first, second) = BoardLayout.split(size, around: fold) {
-                        // 半折叠：一半轮播额度 / 便签，另一半固定显示设备首页的天气。
-                        page(current, snapshot, notes: notes, quotaPages: quotaPages, now: now, size: first.size,
-                             weather: false)
+                    let tick = pageOverride ?? Int(date.timeIntervalSince1970 / 15)
+                    if let (first, second) = BoardLayout.halves(size, fold: fold) {
+                        // 横屏 / 半折叠：一半轮播额度页，另一半轮播便签；没有便签时另一半放天气。
+                        let quotaPages = max(1, (snapshot.subscriptions.count + HomeLayout.perPage - 1) / HomeLayout.perPage)
+                        page(.quota(index: tick % quotaPages), snapshot, notes: notes, now: now, size: first.size,
+                             weather: !notes.isEmpty)
                             .frame(width: first.width, height: first.height).offset(x: first.minX, y: first.minY)
-                        let wu = min(second.width / 320, second.height / 80)
-                        ZStack(alignment: .topLeading) {
-                            HomeBackground(weather: snapshot.weather)
-                            HomeWeatherLine(weather: HomeWeather.make(snapshot.weather, now: now, ttl: snapshot.staleAfter),
-                                            u: wu, xs: second.width / 320)
-                                .offset(y: max(0, (second.height - 72 * wu) / 2))
+                        if notes.isEmpty {
+                            let wu = min(second.width / 320, second.height / 80)
+                            ZStack(alignment: .topLeading) {
+                                HomeBackground(weather: snapshot.weather)
+                                HomeWeatherLine(weather: HomeWeather.make(snapshot.weather, now: now, ttl: snapshot.staleAfter),
+                                                u: wu, xs: second.width / 320)
+                                    .offset(y: max(0, (second.height - 72 * wu) / 2))
+                            }
+                            .frame(width: second.width, height: second.height).clipped()
+                            .offset(x: second.minX, y: second.minY)
+                        } else {
+                            page(.note(index: tick % notes.count), snapshot, notes: notes, now: now, size: second.size,
+                                 weather: true)
+                                .frame(width: second.width, height: second.height).offset(x: second.minX, y: second.minY)
                         }
-                        .frame(width: second.width, height: second.height).clipped()
-                        .offset(x: second.minX, y: second.minY)
                     } else {
-                        page(current, snapshot, notes: notes, quotaPages: quotaPages, now: now, size: size, weather: true)
+                        let pages = BoardLayout.pages(cardCount: snapshot.subscriptions.count, perPage: HomeLayout.perPage,
+                                                      notes: notes.count)
+                        page(pages[tick % pages.count], snapshot, notes: notes, now: now, size: size, weather: true)
                     }
-                    StatusIndicator(cached: cached, error: error, now: now, u: HomeMetrics.unit(size),
+                    // 分屏时状态字号按半屏算，与便签页留出的顶部空间一致
+                    StatusIndicator(cached: cached, error: error, now: now,
+                                    u: HomeMetrics.unit(BoardLayout.halves(size, fold: fold)?.1.size ?? size),
                                     onSettings: onSettings)
                         .frame(width: size.width, alignment: .trailing)
                 } else {
@@ -90,7 +108,7 @@ struct BoardContent: View {
 
     /// 一页：额度页铺满（含背景）；便签页在纯底色上留边距。用 id 区分页面，避免两页叠在一起过渡。
     @ViewBuilder
-    private func page(_ current: Page, _ snapshot: DisplaySnapshot, notes: [Note], quotaPages: Int, now: Int,
+    private func page(_ current: Page, _ snapshot: DisplaySnapshot, notes: [Note], now: Int,
                       size: CGSize, weather: Bool) -> some View {
         let short = min(size.width, size.height)
         let pad = max(10, short * 0.03)

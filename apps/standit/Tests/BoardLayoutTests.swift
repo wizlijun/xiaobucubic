@@ -22,6 +22,18 @@ final class BoardLayoutTests: XCTestCase {
         XCTAssertNil(BoardLayout.split(size, around: nil))
     }
 
+    func testHalvesLandscapeSplitsLeftRight() {
+        // 横屏无折痕：左半额度、右半便签
+        let l = BoardLayout.halves(CGSize(width: 1335, height: 939), fold: nil)
+        XCTAssertEqual(l?.0, CGRect(x: 0, y: 0, width: 667.5, height: 939))
+        XCTAssertEqual(l?.1, CGRect(x: 667.5, y: 0, width: 667.5, height: 939))
+        // 竖屏无折痕：不分屏
+        XCTAssertNil(BoardLayout.halves(CGSize(width: 939, height: 1335), fold: nil))
+        // 有折痕：沿折痕分
+        let f = BoardLayout.halves(CGSize(width: 1000, height: 800), fold: CGRect(x: 0, y: 390, width: 1000, height: 20))
+        XCTAssertEqual(f?.1, CGRect(x: 0, y: 410, width: 1000, height: 390))
+    }
+
     func testHexColor() {
         XCTAssertEqual(Palette.cardHex(0), 0xFFC078)
         XCTAssertEqual(Palette.cardHex(4), 0x6DE1C2)
