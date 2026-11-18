@@ -27,7 +27,7 @@ struct StandItWidget: Widget {
         StaticConfiguration(kind: "StandItBoard", provider: BoardProvider()) { entry in
             WidgetCardView(entry: entry)
         }
-        .configurationDisplayName("StandIt")
+        .configurationDisplayName("Stand It")
         .description("额度与便签轮播，适合放在待机的一半。")
         .supportedFamilies(Self.families)
     }

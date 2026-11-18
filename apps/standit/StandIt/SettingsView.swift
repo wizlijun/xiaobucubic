@@ -18,7 +18,7 @@ struct SettingsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 HStack {
-                    Text("StandIt").font(.system(size: 34, weight: .bold, design: .rounded))
+                    Text("Stand It").font(.system(size: 34, weight: .bold, design: .rounded))
                     Spacer()
                     if let onClose {
                         Button("返回看板", action: onClose).font(.system(.body, design: .rounded))

@@ -20,7 +20,7 @@ enum WidgetTimeline {
 
     private static func card(at i: Int, date: Date, cached: CachedSnapshot?, error: FetchError?, quotaCount: Int) -> WidgetCard {
         if error == .notConfigured { return .message(FetchError.notConfigured.message) }
-        guard let cached else { return .message(error?.message ?? "打开 StandIt 同步数据") }
+        guard let cached else { return .message(error?.message ?? "打开 Stand It 同步数据") }
         let snapshot = cached.snapshot
         let now = Int(date.timeIntervalSince1970)
         let notes = DisplayModel.activeNotes(snapshot, now: now)

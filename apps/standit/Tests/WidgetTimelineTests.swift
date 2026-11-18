@@ -55,9 +55,9 @@ final class WidgetTimelineTests: XCTestCase {
 
     func testNotConfiguredMessage() {
         XCTAssertEqual(kinds(WidgetTimeline.entries(cached: nil, error: .notConfigured, start: start, minutes: 2)),
-                       ["msg:打开 StandIt 设置接入点", "msg:打开 StandIt 设置接入点"])
+                       ["msg:打开 Stand It 设置接入点", "msg:打开 Stand It 设置接入点"])
         XCTAssertEqual(kinds(WidgetTimeline.entries(cached: cached(), error: .notConfigured, start: start, minutes: 1)),
-                       ["msg:打开 StandIt 设置接入点"])
+                       ["msg:打开 Stand It 设置接入点"])
         XCTAssertEqual(kinds(WidgetTimeline.entries(cached: nil, error: .unauthorized, start: start, minutes: 1)),
                        ["msg:鉴权失败"])
         XCTAssertEqual(kinds(WidgetTimeline.entries(cached: cached(), error: .unauthorized, start: start, minutes: 1)),

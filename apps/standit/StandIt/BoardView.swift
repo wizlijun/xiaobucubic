@@ -92,7 +92,7 @@ struct BoardContent: View {
                 } else {
                     Palette.background
                     VStack(spacing: short * 0.03) {
-                        Text("StandIt").font(.system(size: short * 0.08, weight: .bold, design: .rounded))
+                        Text("Stand It").font(.system(size: short * 0.08, weight: .bold, design: .rounded))
                             .foregroundStyle(Palette.text)
                         Text(error?.message ?? "正在连接…").font(.system(size: short * 0.04, design: .rounded))
                             .foregroundStyle(error == nil ? Palette.muted : Palette.warning)

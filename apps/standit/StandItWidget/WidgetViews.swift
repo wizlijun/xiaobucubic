@@ -126,7 +126,7 @@ struct WidgetCardView: View {
             Image(systemName: "note.text").font(.system(size: 28 * k, weight: .semibold))
                 .foregroundStyle(vibrant ? Color.primary : Palette.card(2))
             Spacer(minLength: 0)
-            Text("StandIt").font(.system(size: 13 * k, weight: .semibold, design: .rounded)).foregroundStyle(.secondary)
+            Text("Stand It").font(.system(size: 13 * k, weight: .semibold, design: .rounded)).foregroundStyle(.secondary)
             Text(text).font(.system(size: 18 * k, weight: .bold, design: .rounded))
                 .foregroundStyle(vibrant ? Color.primary : Palette.text).minimumScaleFactor(0.6)
         }

@@ -29,7 +29,7 @@
 - [服务端读取接口](apps/xiaobucubic/API.md)
 - [验证记录](apps/xiaobucubic/VALIDATION.md)
 - [第三方资源与字体许可](apps/xiaobucubic/THIRD_PARTY.md)
-- [StandIt：iPhone 便签看板与 StandBy 小组件](apps/standit/README.md)
+- [Stand It：iPhone 便签看板与 StandBy 小组件](apps/standit/README.md)
 
 ## 测试与打包
 
