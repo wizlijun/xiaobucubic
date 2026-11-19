@@ -35,8 +35,11 @@ final class SnapshotRenderTests: XCTestCase {
             for (label, cached, error, now) in cases {
                 let pageCount = label == "demo" ? 3 : 1
                 for page in 0..<pageCount {
+                    // iPhone 横屏两侧有灵动岛 / 圆角留白，底部有横条
+                    let insets = name == "iphone-landscape" ? EdgeInsets(top: 0, leading: 62, bottom: 21, trailing: 62)
+                        : EdgeInsets()
                     let view = BoardContent(cached: cached, error: error, date: Date(timeIntervalSince1970: TimeInterval(now)),
-                                            fold: fold, onSettings: {}, pageOverride: page)
+                                            fold: fold, insets: insets, onSettings: {}, pageOverride: page)
                         .frame(width: size.width, height: size.height)
                         .environment(\.colorScheme, .dark)
                     let renderer = ImageRenderer(content: view)

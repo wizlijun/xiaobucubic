@@ -1,3 +1,4 @@
+import SwiftUI
 import XCTest
 @testable import StandIt
 
@@ -32,6 +33,18 @@ final class BoardLayoutTests: XCTestCase {
         // 有折痕：沿折痕分
         let f = BoardLayout.halves(CGSize(width: 1000, height: 800), fold: CGRect(x: 0, y: 390, width: 1000, height: 20))
         XCTAssertEqual(f?.1, CGRect(x: 0, y: 410, width: 1000, height: 390))
+    }
+
+    /// 便签铺满半屏时，只有贴着屏幕边、落进安全区外的那几边需要给文字留出距离。
+    func testSafeInsetsOfHalf() {
+        let size = CGSize(width: 900, height: 400)
+        let safe = CGRect(x: 60, y: 0, width: 780, height: 380)
+        let (left, right) = BoardLayout.halves(size, fold: nil)!
+        XCTAssertEqual(BoardLayout.safeInsets(of: right, safe: safe),
+                       EdgeInsets(top: 0, leading: 0, bottom: 20, trailing: 60))
+        XCTAssertEqual(BoardLayout.safeInsets(of: left, safe: safe),
+                       EdgeInsets(top: 0, leading: 60, bottom: 20, trailing: 0))
+        XCTAssertEqual(BoardLayout.safeInsets(of: right, safe: CGRect(origin: .zero, size: size)), EdgeInsets())
     }
 
     func testHexColor() {

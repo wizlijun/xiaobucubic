@@ -1,4 +1,4 @@
-import CoreGraphics
+import SwiftUI
 
 enum Page: Equatable, Hashable {
     case quota(index: Int)
@@ -18,6 +18,12 @@ enum BoardLayout {
         guard size.width > size.height else { return nil }
         let w = size.width / 2
         return (CGRect(x: 0, y: 0, width: w, height: size.height), CGRect(x: w, y: 0, width: w, height: size.height))
+    }
+
+    /// rect 中落在安全区外的各边宽度：便签纸铺到屏幕边，文字按这些距离内缩。
+    static func safeInsets(of rect: CGRect, safe: CGRect) -> EdgeInsets {
+        EdgeInsets(top: max(0, safe.minY - rect.minY), leading: max(0, safe.minX - rect.minX),
+                   bottom: max(0, rect.maxY - safe.maxY), trailing: max(0, rect.maxX - safe.maxX))
     }
 
     /// 折痕把区域分成两块（不含折痕本身）；无折痕返回 nil。
