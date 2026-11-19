@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// 一张便签铺满区域，照设备便签页：加深色抬头“便签 · i / n”，纸面正文（文楷常规），底部浅色小字。
-/// 正文字号从短边 × 0.12 递减到 × 0.045，取第一个能放下全文的档位。
+/// 正文字号固定为短边的 7%，不随内容多少变化；放不下时末尾省略。
 struct NotePageView: View {
     let note: Note
     let paper: Int
@@ -21,14 +21,7 @@ struct NotePageView: View {
                     .frame(maxWidth: .infinity, minHeight: headerH, maxHeight: headerH, alignment: .leading)
                     .background(Palette.paperHeader(paper))
                 VStack(alignment: .leading, spacing: s * 0.03) {
-                    ViewThatFits(in: .vertical) {
-                        ForEach(Self.scales, id: \.self) { k in
-                            Text(note.text).font(NoteFont.of(size: s * k))
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        Text(note.text).font(NoteFont.of(size: s * Self.scales.last!))
-                            .truncationMode(.tail)
-                    }
+                    Text(note.text).font(NoteFont.of(size: NoteFont.bodySize(shortSide: s))).truncationMode(.tail)
                     .foregroundStyle(Palette.noteText)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     Text(Format.noteMeta(note, now: now))
@@ -44,5 +37,4 @@ struct NotePageView: View {
         }
     }
 
-    static let scales: [CGFloat] = [0.12, 0.105, 0.09, 0.08, 0.07, 0.06, 0.052, 0.045]
 }

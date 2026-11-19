@@ -54,9 +54,10 @@ enum WidgetTimeline {
 
     private static func lowestRemaining(_ sub: Subscription) -> Int? { sub.windows.compactMap(DisplayModel.remaining).min() }
 
-    /// 小组件便签的抬头字号、抬头高度（设备 29:12）和底部小字字号；k 为小组件缩放（1…3）。
-    static func noteChrome(k: CGFloat) -> (header: CGFloat, headerHeight: CGFloat, meta: CGFloat) {
-        (8 * k, (8 * k * 29 / 12).rounded(), 7 * k)
+    /// 小组件便签的抬头字号、抬头高度（设备 29:12）、底部小字字号和正文字号；k 为小组件缩放（1…3）。
+    /// 正文字号固定，不随内容多少缩放。
+    static func noteChrome(k: CGFloat) -> (header: CGFloat, headerHeight: CGFloat, meta: CGFloat, body: CGFloat) {
+        (8 * k, (8 * k * 29 / 12).rounded(), 7 * k, 16 * k)
     }
 
     /// 背景被系统去掉时是否由小组件自己画便签纸。

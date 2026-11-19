@@ -128,5 +128,12 @@ final class WidgetTimelineTests: XCTestCase {
         XCTAssertEqual(c.header, 24)
         XCTAssertEqual(c.headerHeight, 58)
         XCTAssertEqual(c.meta, 21)
+        XCTAssertEqual(c.body, 48)
+    }
+
+    /// 便签正文字号只看尺寸，不随内容多少变化；放不下时末尾省略。
+    func testNoteBodySizeIsFixed() {
+        XCTAssertEqual(WidgetTimeline.noteChrome(k: 1).body, 16)
+        XCTAssertEqual(NoteFont.bodySize(shortSide: 400), 28)
     }
 }

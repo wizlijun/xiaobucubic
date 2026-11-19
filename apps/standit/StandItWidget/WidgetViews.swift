@@ -105,8 +105,8 @@ struct WidgetCardView: View {
                        maxHeight: chrome.headerHeight + margins.top * 0.5, alignment: .leading)
                 .background(vibrant ? AnyShapeStyle(Color.primary.opacity(0.15)) : AnyShapeStyle(Palette.paperHeader(paper)))
             VStack(alignment: .leading, spacing: 4 * k) {
-                Text(note.text).font(NoteFont.of(size: 22 * k))
-                    .minimumScaleFactor(0.5).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                Text(note.text).font(NoteFont.of(size: chrome.body)).truncationMode(.tail)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 Text(Format.noteMeta(note, now: now)).font(.system(size: chrome.meta, design: .rounded)).lineLimit(1)
                     .foregroundStyle(vibrant ? AnyShapeStyle(.secondary) : AnyShapeStyle(Palette.noteMuted))
             }

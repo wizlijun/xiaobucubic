@@ -66,4 +66,7 @@ enum NoteFont {
 
     /// 固定字号（布局已按屏幕计算字号，不再跟随动态字体）。
     static func of(size: CGFloat) -> Font { .custom(postScriptName, fixedSize: size) }
+
+    /// App 便签页正文字号：短边的 7%（接近设备 32px / 480），不随内容多少变化。
+    static func bodySize(shortSide: CGFloat) -> CGFloat { (shortSide * 0.07).rounded() }
 }
