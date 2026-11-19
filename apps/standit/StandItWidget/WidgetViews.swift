@@ -147,20 +147,20 @@ struct WidgetCardView: View {
 }
 
 #Preview("便签", as: .systemSmall) {
-    StandItWidget()
+    StandItNotesWidget()
 } timeline: {
     BoardEntry(date: .now, card: .note(Note(title: "出门前", text: "带伞，傍晚有雷阵雨。", priority: "high",
                                             dueAt: Int(Date().timeIntervalSince1970) + 1500), paper: 0, count: 2))
 }
 
 #Preview("便签 · 大号", as: .systemLarge) {
-    StandItWidget()
+    StandItNotesWidget()
 } timeline: {
     BoardEntry(date: .now, card: .note(Note(text: "周五下午三点交周报，记得附上额度截图。"), paper: 1, count: 2))
 }
 
 #Preview("提示", as: .systemSmall) {
-    StandItWidget()
+    StandItNotesWidget()
 } timeline: {
-    BoardEntry(date: .now, card: .message("打开 StandIt 设置接入点"))
+    BoardEntry(date: .now, card: .message("暂无便签"))
 }

@@ -27,30 +27,48 @@ final class WidgetTimelineTests: XCTestCase {
 
     private var start: Date { Date(timeIntervalSince1970: TimeInterval(t0)) }
 
-    func testRotationOrder() {
+    /// 余量小组件只显示额度，有便签也不轮播。
+    func testQuotaWidgetNeverShowsNotes() {
         let entries = WidgetTimeline.entries(cached: cached(notes: [Note(text: "a"), Note(text: "b")]), error: nil,
-                                             start: start, minutes: 6)
-        XCTAssertEqual(kinds(entries), ["q", "a", "q", "b", "q", "a"])
-        XCTAssertEqual(entries.map { Int($0.0.timeIntervalSince1970) - t0 }, [0, 60, 120, 180, 240, 300])
+                                             start: start, minutes: 4, content: .quota)
+        XCTAssertEqual(kinds(entries), ["q", "q", "q", "q"])
+        XCTAssertEqual(entries.map { Int($0.0.timeIntervalSince1970) - t0 }, [0, 60, 120, 180])
+    }
+
+    /// 便签小组件每分钟换一张便签，不夹额度。
+    func testNotesWidgetRotatesEveryMinute() {
+        let entries = WidgetTimeline.entries(cached: cached(notes: [Note(text: "a"), Note(text: "b")]), error: nil,
+                                             start: start, minutes: 5, content: .notes)
+        XCTAssertEqual(kinds(entries), ["a", "b", "a", "b", "a"])
+        XCTAssertEqual(entries.map { Int($0.0.timeIntervalSince1970) - t0 }, [0, 60, 120, 180, 240])
     }
 
     func testExpiredNotesSkipped() {
         let notes = [Note(text: "a", expiresAt: t0 + 180), Note(text: "b")]
-        let entries = WidgetTimeline.entries(cached: cached(notes: notes), error: nil, start: start, minutes: 8)
-        XCTAssertFalse(kinds(Array(entries.dropFirst(3))).contains("a"))
-        XCTAssertEqual(kinds(entries), ["q", "a", "q", "b", "q", "b", "q", "b"])
-        let gone = WidgetTimeline.entries(cached: cached(notes: [Note(text: "x", expiresAt: t0)]), error: nil,
-                                          start: start, minutes: 4)
-        XCTAssertEqual(kinds(gone), ["q", "q", "q", "q"])
+        let entries = WidgetTimeline.entries(cached: cached(notes: notes), error: nil, start: start, minutes: 6,
+                                             content: .notes)
+        XCTAssertEqual(kinds(entries), ["a", "b", "a", "b", "b", "b"])
+    }
+
+    /// 没有有效便签时便签小组件给出提示，而不是改显示额度。
+    func testNotesWidgetWithoutNotes() {
+        let gone = WidgetTimeline.entries(cached: cached([sub("a", used: 10)], notes: [Note(text: "x", expiresAt: t0)]),
+                                          error: nil, start: start, minutes: 2, content: .notes)
+        XCTAssertEqual(kinds(gone), ["msg:暂无便签", "msg:暂无便签"])
+        XCTAssertEqual(kinds(WidgetTimeline.entries(cached: nil, error: .notConfigured, start: start, minutes: 1,
+                                                    content: .notes)),
+                       ["msg:打开 Stand It 设置接入点"])
     }
 
     /// 便签卡带上在有效便签中的序号和总数，用于抬头“便签 · 2 / 3”。
     func testNoteCardCarriesPositionAndCount() {
-        let notes = [Note(text: "a", expiresAt: t0 + 240), Note(text: "b"), Note(text: "c")]
-        let entries = WidgetTimeline.entries(cached: cached(notes: notes), error: nil, start: start, minutes: 6)
-        XCTAssertEqual(entries[1].1, .note(notes[0], paper: 0, count: 3))
-        XCTAssertEqual(entries[3].1, .note(notes[1], paper: 1, count: 3))
-        XCTAssertEqual(entries[5].1, .note(notes[1], paper: 0, count: 2))
+        let notes = [Note(text: "a", expiresAt: t0 + 120), Note(text: "b"), Note(text: "c")]
+        let entries = WidgetTimeline.entries(cached: cached(notes: notes), error: nil, start: start, minutes: 4,
+                                             content: .notes)
+        XCTAssertEqual(entries[0].1, .note(notes[0], paper: 0, count: 3))
+        XCTAssertEqual(entries[1].1, .note(notes[1], paper: 1, count: 3))
+        XCTAssertEqual(entries[2].1, .note(notes[1], paper: 0, count: 2))
+        XCTAssertEqual(entries[3].1, .note(notes[2], paper: 1, count: 2))
     }
 
     func testNotConfiguredMessage() {

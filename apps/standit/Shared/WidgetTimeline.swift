@@ -7,26 +7,36 @@ enum WidgetCard: Equatable {
     case message(String)
 }
 
+/// 两个小组件各管一样：余量只显示额度，便签只轮播便签；StandBy 里由用户自己切换。
+enum WidgetContent {
+    case quota, notes
+}
+
 enum WidgetTimeline {
-    /// 每分钟一条：额度、便签1、额度、便签2…；每条按自己的时刻过滤已过期便签。
+    /// 每分钟一条；便签小组件逐条轮播，每条按自己的时刻过滤已过期便签。
     static func entries(cached: CachedSnapshot?, error: FetchError?, start: Date, minutes: Int = 15,
-                        quotaCount: Int = 3) -> [(Date, WidgetCard)] {
+                        quotaCount: Int = 3, content: WidgetContent = .quota) -> [(Date, WidgetCard)] {
         let base = start.timeIntervalSince1970.rounded(.down)
         return (0..<max(1, minutes)).map { i in
             let date = Date(timeIntervalSince1970: base + TimeInterval(i * 60))
-            return (date, card(at: i, date: date, cached: cached, error: error, quotaCount: quotaCount))
+            return (date, card(at: i, date: date, cached: cached, error: error, quotaCount: quotaCount, content: content))
         }
     }
 
-    private static func card(at i: Int, date: Date, cached: CachedSnapshot?, error: FetchError?, quotaCount: Int) -> WidgetCard {
+    private static func card(at i: Int, date: Date, cached: CachedSnapshot?, error: FetchError?, quotaCount: Int,
+                             content: WidgetContent) -> WidgetCard {
         if error == .notConfigured { return .message(FetchError.notConfigured.message) }
         guard let cached else { return .message(error?.message ?? "打开 Stand It 同步数据") }
         let snapshot = cached.snapshot
-        let now = Int(date.timeIntervalSince1970)
-        let notes = DisplayModel.activeNotes(snapshot, now: now)
-        guard i % 2 == 1, !notes.isEmpty else { return .quota(lowest(snapshot.subscriptions, count: quotaCount)) }
-        let index = (i / 2) % notes.count
-        return .note(notes[index], paper: index, count: notes.count)
+        switch content {
+        case .quota:
+            return .quota(lowest(snapshot.subscriptions, count: quotaCount))
+        case .notes:
+            let notes = DisplayModel.activeNotes(snapshot, now: Int(date.timeIntervalSince1970))
+            guard !notes.isEmpty else { return .message("暂无便签") }
+            let index = i % notes.count
+            return .note(notes[index], paper: index, count: notes.count)
+        }
     }
 
     /// 按各窗口中最低的剩余取最少的 3 个；没有数据的排最后，同值保持原顺序。
