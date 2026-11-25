@@ -9,7 +9,7 @@
 用法:
     ./codex_usage.py          # 订阅、已用额度、重置时间
     ./codex_usage.py --json   # account 和额度接口的 JSON 结果
-    ./codex_usage.py --push [URL] [--interval 300]   # 提交到显示服务
+    ./codex_usage.py --push [URL] [--follow]   # 提交到显示服务
 """
 import argparse
 import json
@@ -198,7 +198,7 @@ def to_display(data):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--json", action="store_true", help="输出账户和额度接口的 JSON 结果")
-    display_push.add_arguments(parser)
+    display_push.add_arguments(parser, "codex")
     args = parser.parse_args()
     try:
         if args.push:

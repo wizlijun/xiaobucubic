@@ -5,6 +5,7 @@
 或环境变量 DISPLAY_SERVER_URL 指定，默认 http://127.0.0.1:8007。
 """
 import json
+import math
 import os
 import re
 import sys
@@ -18,14 +19,16 @@ DEFAULT_URL = "http://127.0.0.1:8007"
 ENV_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "display.env")
 
 
-def add_arguments(parser):
+def add_arguments(parser, collector):
+    parser.set_defaults(collector=collector)
     group = parser.add_argument_group("提交到显示服务")
     group.add_argument(
         "--push", nargs="?", metavar="URL", const=os.environ.get("DISPLAY_SERVER_URL") or DEFAULT_URL,
         help="把用量提交到显示服务，默认 $DISPLAY_SERVER_URL 或 %s" % DEFAULT_URL)
     group.add_argument(
         "--interval", type=int, default=0, metavar="SECONDS",
-        help="与 --push 一起使用：每隔 SECONDS 秒重新采集并提交，单次失败不退出")
+        help="兼容旧参数：非零时启用服务端调度，查询间隔由服务端决定")
+    group.add_argument("--follow", action="store_true", help="持续轮询服务端，仅按服务端指令查询上游")
 
 
 def iso_to_unix(value):
@@ -68,23 +71,43 @@ def write_token():
     return ""
 
 
-def push(base_url, item, path=None):
-    """默认提交到 /v1/subscriptions/<id>；天气等其他数据传入 path。"""
-    url = base_url.rstrip("/") + (path or "/v1/subscriptions/" + quote(item["id"], safe=""))
+def request_json(base_url, path, body, method="POST", lease=None):
+    url = base_url.rstrip("/") + path
     headers = {"Content-Type": "application/json", "Accept": "application/json"}
     token = write_token()
     if token:
         headers["Authorization"] = "Bearer " + token
-    body = json.dumps({k: v for k, v in item.items() if v is not None}, ensure_ascii=False).encode("utf-8")
-    req = urllib.request.Request(url, data=body, headers=headers, method="PUT")
+    if lease:
+        headers["X-Collection-Lease"] = lease
+    req = urllib.request.Request(url, data=json.dumps(body, ensure_ascii=False).encode("utf-8"), headers=headers, method=method)
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:
-            resp.read()
+            return json.load(resp)
     except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")[:200]
-        raise RuntimeError("提交到显示服务失败: HTTP %d %s" % (exc.code, detail)) from None
+        raise RuntimeError("显示服务请求失败: HTTP %d" % exc.code) from None
     except (urllib.error.URLError, OSError) as exc:
         raise RuntimeError("无法连接显示服务 %s: %s" % (base_url, getattr(exc, "reason", exc))) from None
+    except ValueError:
+        raise RuntimeError("显示服务未返回有效 JSON。") from None
+
+
+def push(base_url, item, path=None, lease=None):
+    """提交采集结果，返回包含 collection 调度指令的响应。"""
+    return request_json(base_url, path or "/v1/subscriptions/" + quote(item["id"], safe=""),
+                        {k: v for k, v in item.items() if v is not None}, method="PUT", lease=lease)
+
+
+def instruction(response):
+    value = response.get("collection") if isinstance(response, dict) else None
+    if not isinstance(value, dict) or type(value.get("query_now")) is not bool:
+        raise RuntimeError("显示服务未返回有效的 collection 调度指令，暂停上游查询。")
+    delay = value.get("poll_after_seconds")
+    if (isinstance(delay, bool) or not isinstance(delay, (int, float)) or
+            not math.isfinite(delay) or not 1 <= delay <= 86400):
+        raise RuntimeError("服务端轮询间隔无效，暂停上游查询。")
+    if value["query_now"] and (not isinstance(value.get("lease_id"), str) or not value["lease_id"]):
+        raise RuntimeError("服务端未授予有效采集租约，暂停上游查询。")
+    return value
 
 
 def summary(item):
@@ -96,17 +119,34 @@ def summary(item):
 
 
 def run(args, collect, path=None, describe=summary):
-    """collect() 返回要提交的数据。单次模式失败即退出；循环模式记录错误后继续，不提交伪数据。"""
-    while True:
+    """持续模式首次也先询问；上传后遵循返回指令，控制服务断线时不访问上游。"""
+    if not getattr(args, "follow", False) and not args.interval:
         try:
             item = collect()
             push(args.push, item, path)
-            print("%s 已提交 %s" % (time.strftime("%H:%M:%S"), describe(item)))
+            print("%s 已提交 %s" % (time.strftime("%H:%M:%S"), describe(item)), flush=True)
         except RuntimeError as exc:
-            if not args.interval:
-                sys.exit(str(exc))
-            print("%s %s" % (time.strftime("%H:%M:%S"), exc), file=sys.stderr)
-        if not args.interval:
-            return
-        sys.stdout.flush()
-        time.sleep(args.interval)
+            sys.exit(str(exc))
+        return
+    control_path = "/v1/collectors/" + quote(args.collector, safe="")
+    while True:
+        delay = 15
+        lease = None
+        try:
+            command = instruction(request_json(args.push, control_path + "/poll", {}))
+            if command["query_now"]:
+                lease = command["lease_id"]
+                item = collect()
+                command = instruction(push(args.push, item, path, lease=lease))
+                lease = None
+                print("%s 已提交 %s" % (time.strftime("%H:%M:%S"), describe(item)), flush=True)
+            delay = command["poll_after_seconds"]
+        except (RuntimeError, OSError) as exc:
+            print("%s 采集 %s: %s" % (time.strftime("%H:%M:%S"), args.collector, exc), file=sys.stderr, flush=True)
+            if lease:
+                try:
+                    command = instruction(request_json(args.push, control_path + "/failure", {"lease_id": lease}))
+                    delay = command["poll_after_seconds"]
+                except RuntimeError as report_error:
+                    print("无法报告采集失败: %s" % report_error, file=sys.stderr, flush=True)
+        time.sleep(delay)

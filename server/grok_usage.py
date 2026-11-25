@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """查询 Grok 订阅的周额度，不调用模型、不消耗推理 token。
 
-复用官方 Grok CLI 登录后保存的 ~/.grok/auth.json，仅 GET 账单和套餐信息。
+复用官方 Grok CLI 登录后保存的 ~/.grok/auth.json，GET 账单和套餐信息；
+access token 临近过期时使用 refresh token 自动续期，401 时刷新并重试一次。
 需要先安装官方 CLI (https://docs.x.ai/build/overview) 并执行 `grok login`。
 账单接口属于客户端内部接口，字段可能随 Grok 更新而变化。
 
@@ -9,7 +10,7 @@
     ./grok_usage.py
     ./grok_usage.py --json
     ./grok_usage.py --auth-file /path/to/auth.json
-    ./grok_usage.py --push [URL] [--interval 300]   # 提交到显示服务
+    ./grok_usage.py --push [URL] [--follow]   # 提交到显示服务
 """
 import argparse
 import json
@@ -19,29 +20,15 @@ import time
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
-from pathlib import Path
 
 import display_push
+from grok_auth import default_auth_path, load_credentials
 
 BASE_URL = "https://cli-chat-proxy.grok.com/v1"
-OIDC_SCOPE = "https://auth.x.ai::b1a00492-073a-47ea-816f-4c329264a828"
-LEGACY_SCOPE = "https://accounts.x.ai/sign-in"
 
 
-def load_credentials(path):
-    try:
-        with Path(path).expanduser().open(encoding="utf-8") as f:
-            data = json.load(f)
-    except FileNotFoundError:
-        raise RuntimeError("未找到 Grok 登录凭据，请先运行 `grok login`。") from None
-    except (ValueError, OSError):
-        raise RuntimeError("无法读取 Grok 凭据文件，请检查 --auth-file 或重新运行 `grok login`。") from None
-    if isinstance(data, dict):
-        for scope in (OIDC_SCOPE, LEGACY_SCOPE):
-            entry = data.get(scope)
-            if isinstance(entry, dict) and isinstance(entry.get("key"), str) and entry["key"].strip():
-                return entry["key"].strip()
-    raise RuntimeError("未找到 Grok 订阅账号凭据，请运行 `grok login`，使用订阅账号登录。")
+class AuthenticationError(RuntimeError):
+    pass
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -63,7 +50,9 @@ def fetch_json(endpoint, token):
             data = json.load(resp)
     except urllib.error.HTTPError as exc:
         # 不输出原始响应正文，避免错误页面回显凭据。
-        hint = "；登录可能已过期，请运行 `grok login`" if exc.code in (401, 403) else ""
+        if exc.code == 401:
+            raise AuthenticationError("Grok 拒绝了当前 access token (HTTP 401)。") from None
+        hint = "；账号或套餐无权访问此接口，重新登录不一定能解决" if exc.code == 403 else ""
         raise RuntimeError("请求 %s 失败: HTTP %d%s" % (endpoint, exc.code, hint)) from None
     except (urllib.error.URLError, TimeoutError, OSError):
         raise RuntimeError("请求 %s 失败，请检查网络或稍后重试。" % endpoint) from None
@@ -83,6 +72,18 @@ def fetch_usage(token):
         print("提示: %s" % exc, file=sys.stderr)
         settings = None
     return {"billing": billing, "settings": settings}
+
+
+def collect_usage(auth_file):
+    token = load_credentials(auth_file)
+    try:
+        return fetch_usage(token)
+    except AuthenticationError:
+        token = load_credentials(auth_file, rejected_token=token)
+        try:
+            return fetch_usage(token)
+        except AuthenticationError:
+            raise RuntimeError("Grok 自动续期后仍返回 401，请运行 `grok login` 重新授权。") from None
 
 
 def percent(value):
@@ -167,14 +168,14 @@ def to_display(data):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--json", action="store_true", help="输出账单和套餐接口的原始 JSON")
-    parser.add_argument("--auth-file", default="~/.grok/auth.json", help="Grok CLI 凭据文件路径")
-    display_push.add_arguments(parser)
+    parser.add_argument("--auth-file", default=default_auth_path(), help="Grok CLI 凭据文件路径（支持 GROK_AUTH_PATH / GROK_HOME）")
+    display_push.add_arguments(parser, "grok")
     args = parser.parse_args()
     try:
         if args.push:
-            display_push.run(args, lambda: to_display(fetch_usage(load_credentials(args.auth_file))))
+            display_push.run(args, lambda: to_display(collect_usage(args.auth_file)))
             return
-        data = fetch_usage(load_credentials(args.auth_file))
+        data = collect_usage(args.auth_file)
         if args.json:
             print(json.dumps(data, indent=2, ensure_ascii=False))
         else:

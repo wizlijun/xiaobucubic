@@ -2,6 +2,22 @@
 __pycache__/
 server/banwagong.env
 
+# Logs (including rotated logs)
+*.log
+*.log.*
+
+# Local environment files; keep templates versioned
+.env
+.env.*
+*.env
+*.env.*
+!.env.example
+!.env.sample
+!.env.template
+!*.env.example
+!*.env.sample
+!*.env.template
+
 # HP (Oura) local credentials and cache
 server/oura.env
 server/oura_token.json

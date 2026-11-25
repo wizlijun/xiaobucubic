@@ -9,7 +9,7 @@ updated_at 取接口数据对应的时间（每 15 分钟一档），不是查�
 用法:
     ./weather_shenzhen.py          # 人类可读输出
     ./weather_shenzhen.py --json   # 显示服务所用的天气 JSON
-    ./weather_shenzhen.py --push [URL] [--interval 300]   # 提交到显示服务
+    ./weather_shenzhen.py --push [URL] [--follow]   # 提交到显示服务
 """
 import argparse
 import json
@@ -118,7 +118,7 @@ def summary(weather):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--json", action="store_true", help="输出显示服务所用的天气 JSON")
-    display_push.add_arguments(parser)
+    display_push.add_arguments(parser, "weather")
     args = parser.parse_args()
     try:
         if args.push:

@@ -148,7 +148,7 @@ def summary(item):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--json", action="store_true", help="输出显示服务所用的订阅 JSON")
-    display_push.add_arguments(parser)
+    display_push.add_arguments(parser, "banwagong")
     args = parser.parse_args()
     if args.interval < 0 or (args.interval and args.interval < 60):
         parser.error("--interval 必须为 0（单次）或至少 60 秒")

@@ -7,7 +7,7 @@
 用法:
     ./claude_usage.py          # 人类可读输出
     ./claude_usage.py --json   # 原始 JSON
-    ./claude_usage.py --push [URL] [--interval 300]   # 提交到显示服务
+    ./claude_usage.py --push [URL] [--follow]   # 提交到显示服务
 """
 import argparse
 import json
@@ -162,7 +162,7 @@ def print_usage(data, creds):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--json", action="store_true", help="输出原始 JSON")
-    display_push.add_arguments(parser)
+    display_push.add_arguments(parser, "claude")
     args = parser.parse_args()
     try:
         if args.push:

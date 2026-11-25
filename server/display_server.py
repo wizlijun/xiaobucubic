@@ -16,10 +16,12 @@
     GET    /v1/messages                 查看自己推送且仍有效的提醒
     PUT    /v1/weather                  覆盖天气
     DELETE /v1/weather
+    PUT    /v1/energy                   提交/覆盖个人能量（null 表示清空）
+    DELETE /v1/energy
     GET    /healthz                     运行状态，含当前采集间隔
 
 扩展字段（终端忽略）:
-    订阅 order      主页排序，越小越靠前；默认 claude / codex / grok 在前
+    订阅 order      主页排序，越小越靠前；默认 claude / codex / grok / gemini 在前
     提醒 id         便于更新、删除；未提供时由服务生成
     提醒 expires_at 到时后服务端不再下发（终端自身不会删除到期提醒）
     提醒 ttl_seconds 有效期秒数，服务端换算为 expires_at，与 expires_at 二选一
@@ -29,13 +31,11 @@
     天气 pressure_hpa   当前海平面气压，单位 hPa
     <字段>_utc      每个 *_at 时间戳都附带一份 UTC 时间，如 updated_at_utc: "2026-10-22T11:09:59Z"
 
-定时采集: 服务依次运行 claude_usage.py / codex_usage.py / grok_usage.py / banwagong_usage.py /
-weather_shenzhen.py --push，把最新用量和深圳天气写入缓存；单个脚本失败或超时
-只记录日志，缓存保留上一次成功的数据。采集间隔按 /v1/display 的请求动态调整:
-    有请求时跟随请求间隔的平均值，请求越频繁刷新越快，范围 --min-interval 到
-    stale_after_seconds 的一半，保证正在看的终端不会显示过期；
-    一轮采集周期内没有请求则间隔翻倍，最长 --max-interval；
-    空闲后重新收到请求且缓存已旧时立即采集。
+按需采集: 各采集器通过 POST /v1/collectors/<id>/poll 询问服务端是否需要查询。
+    默认有终端读取时每 600 秒刷新；180 秒没有读取则暂停上游查询。
+    暂停或等待刷新时仍每 15 秒轮询，终端重新访问且缓存到期时获得查询指令。
+    PUT 用量/天气的响应包含 collection 指令；失败通过 /failure 报告并退避。
+    调度轮询与上传不计为终端访问，失败保留上一次成功数据。
 
 数据保存在 JSON 文件中，重启后保留；各数据源的 updated_at 原样保存，不随响应刷新。
 
@@ -50,6 +50,7 @@ import json
 import math
 import os
 import re
+import signal
 import subprocess
 import sys
 import tempfile
@@ -67,8 +68,12 @@ MAX_WINDOWS = 2
 MIN_TTL = 60
 BOT_DEFAULT_TTL = 24 * 3600
 BOT_MAX_TTL = 7 * 24 * 3600
-DEFAULT_ORDER = ("claude", "codex", "grok", "banwagong")
+DEFAULT_ORDER = ("energy", "claude", "codex", "grok", "gemini", "banwagong")
 SOURCES = ("official", "manual", "estimated", "unknown")
+ENERGY_TRENDS = ("charging", "draining", "steady")
+ENERGY_TREND_LABELS = {"charging": "回血中", "draining": "消耗中", "steady": "平稳"}
+ENERGY_MIN_TTL = 60
+ENERGY_MAX_TTL = 7 * 24 * 3600
 ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_STATE = os.path.join(BASE_DIR, "display_state.json")
@@ -76,10 +81,14 @@ COLLECTORS = {
     "claude": "claude_usage.py",
     "codex": "codex_usage.py",
     "grok": "grok_usage.py",
+    "gemini": "gemini_usage.py",
+    "bandwagon": "bandwagon_usage.py",
     "banwagong": "banwagong_usage.py",
     "weather": "weather_shenzhen.py",
+    "energy": "hp_usage.py",
 }
 COLLECT_TIMEOUT = 90
+COLLECT_TIMEOUTS = {"energy": 300}  # HP 每日首轮要拉 28 天心率基线，约 2.5 分钟
 
 
 class BadRequest(ValueError):
@@ -250,6 +259,70 @@ def clean_weather(body, now):
     }
 
 
+WEEKLY_ITEMS = ("sleep", "late", "exercise_low", "sedentary", "exercise_high", "stress", "drain", "recovery")
+
+
+def _clean_weekly(value):
+    """HP 周限（hp_weekly），缺失为 None；字段非法时 400，不显示一个错误的数。"""
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise BadRequest("weekly 必须是 JSON 对象或 null")
+    remaining = _number(value, "remaining_percent", 0, 100)
+    reset_at = _timestamp(value, "reset_at")
+    if remaining is None or reset_at is None:
+        raise BadRequest("weekly 需要 remaining_percent 和 reset_at")
+    out = {"remaining_percent": remaining, "reset_at": reset_at}
+    debt = _number(value, "debt_hours", 0, 1000)
+    if debt is not None:
+        out["debt_hours"] = debt
+    top = value.get("top")
+    if top is not None:
+        if top not in WEEKLY_ITEMS:
+            raise BadRequest("weekly.top 必须是 %s 之一" % " / ".join(WEEKLY_ITEMS))
+        out["top"] = top
+    items = value.get("items")
+    if items is not None:
+        if not isinstance(items, dict) or any(k not in WEEKLY_ITEMS for k in items):
+            raise BadRequest("weekly.items 只能包含 %s" % " / ".join(WEEKLY_ITEMS))
+        out["items"] = {k: _number(items, k, 0, 1000) for k in WEEKLY_ITEMS if items.get(k) is not None}
+    return out
+
+
+def clean_energy(body, now):
+    if not isinstance(body, dict):
+        raise BadRequest("能量必须是 JSON 对象或 null")
+    source = body.get("source") or "unknown"
+    if source not in SOURCES:
+        raise BadRequest("source 必须是 %s 之一" % " / ".join(SOURCES))
+    item = {
+        "name": _text(body, "name", 40, default="HP"),
+        "level_percent": _number(body, "level_percent", 0, 100),
+        "source": source,
+        "updated_at": _timestamp(body, "updated_at") or now,
+    }
+    status = _text(body, "status", 16)
+    if status:
+        item["status"] = status
+    trend = body.get("trend")
+    if trend is not None:
+        if not isinstance(trend, str) or trend not in ENERGY_TRENDS:
+            raise BadRequest("trend 必须是 %s 之一" % " / ".join(ENERGY_TRENDS))
+        item["trend"] = trend
+    note = _text(body, "note", 80)
+    if note:
+        item["note"] = note
+    ttl = body.get("stale_after_seconds")
+    if ttl is not None:
+        if isinstance(ttl, bool) or not isinstance(ttl, int) or not ENERGY_MIN_TTL <= ttl <= ENERGY_MAX_TTL:
+            raise BadRequest("stale_after_seconds 必须是 %d–%d 的整数秒" % (ENERGY_MIN_TTL, ENERGY_MAX_TTL))
+        item["stale_after_seconds"] = ttl
+    weekly = _clean_weekly(body.get("weekly"))
+    if weekly:
+        item["weekly"] = weekly
+    return item
+
+
 def _active(messages, now):
     return [m for m in messages if not m.get("expires_at") or m["expires_at"] > now]
 
@@ -272,16 +345,60 @@ def with_utc(value):
     return out
 
 
+def energy_to_subscription(energy, stale_after, now):
+    """将顶层 energy 投影为通用订阅卡片，现有所有设备无需升级即可动态显示。"""
+    if not isinstance(energy, dict):
+        return None
+    base = energy.get("status") or ENERGY_TREND_LABELS.get(energy.get("trend")) or "当前"
+    note = energy.get("note")
+    label = ("%s · %s" % (base, note)) if (note and len(base) + len(note) + 3 <= 16) else base
+    level = energy.get("level_percent")
+    used = None
+    if level is not None:
+        raw_used = round(max(0.0, min(100.0, 100.0 - float(level))), 1)
+        used = int(raw_used) if float(raw_used).is_integer() else raw_used
+    updated_at = energy.get("updated_at")
+    energy_ttl = energy.get("stale_after_seconds")
+    # 客户端按全局 stale_after 判断是否过期；若能量仍在自身独立有效期内，保持未过期状态。
+    if updated_at and energy_ttl and 0 <= now - updated_at <= energy_ttl and now - updated_at > stale_after:
+        updated_at = now
+    item = {
+        "id": "energy",
+        "name": energy.get("name") or "HP",
+        "source": energy.get("source") or "unknown",
+        "updated_at": updated_at or now,
+        "windows": [{
+            "label": label[:16],
+            "used_percent": used,
+            "reset_at": None,
+        }],
+    }
+    weekly = energy.get("weekly")
+    if isinstance(weekly, dict) and weekly.get("remaining_percent") is not None:
+        # 标签「7天」：设备显示为「周限」，iPhone 隐藏标签，与其它卡片的周额度一致。
+        item["windows"].append({"label": "7天", "used_percent": 100 - weekly["remaining_percent"],
+                                "reset_at": weekly.get("reset_at")})
+    if note:
+        item["note"] = note
+    return item
+
+
 def build_display(data, stale_after, now):
     def order(sub):
         default = DEFAULT_ORDER.index(sub["id"]) if sub["id"] in DEFAULT_ORDER else len(DEFAULT_ORDER)
         return (sub.get("order", default), sub["id"])
 
+    subs = dict(data["subscriptions"])
+    energy = data.get("energy")
+    if energy is not None and "energy" not in subs:
+        subs["energy"] = energy_to_subscription(energy, stale_after, now)
+
     display = with_utc({
         "schema_version": SCHEMA_VERSION,
         "generated_at": now,
         "stale_after_seconds": stale_after,
-        "subscriptions": sorted(data["subscriptions"].values(), key=order),
+        "subscriptions": sorted(subs.values(), key=order),
+        "energy": energy,
         "messages": _active(data["messages"], now)[:MAX_MESSAGES],
         "weather": data["weather"],
     })
@@ -297,102 +414,144 @@ def log(message):
     print("%s %s" % (time.strftime("%Y-%m-%d %H:%M:%S"), message), file=sys.stderr, flush=True)
 
 
-def run_collector(name, push_url):
-    """以子进程运行用量脚本，由脚本自己提交到本服务；超时会被强制结束。"""
-    try:
-        proc = subprocess.run(
-            [sys.executable, os.path.join(BASE_DIR, COLLECTORS[name]), "--push", push_url],
-            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=COLLECT_TIMEOUT,
-        )
-    except subprocess.TimeoutExpired:
-        return log("采集 %s 超时 (%d 秒)，保留上次数据" % (name, COLLECT_TIMEOUT))
-    output = (proc.stdout.strip() + "\n" + proc.stderr.strip()).strip().replace("\n", " | ")
-    if proc.returncode:
-        log("采集 %s 失败 (退出码 %d)，保留上次数据: %s" % (name, proc.returncode, output[:300]))
-    else:
-        log("采集 %s: %s" % (name, output[:300]))
-
-
 class Scheduler:
-    """根据 /v1/display 的请求情况动态调整采集间隔，规则见模块说明。"""
+    """服务端统一控制各数据源；单调时钟计时，短租约防止重复查询。"""
 
-    def __init__(self, min_interval, max_interval, stale_after, clock=time.monotonic):
-        self.min_interval = min_interval
-        self.max_interval = max_interval
-        self.active_cap = max(min_interval, min(max_interval, stale_after // 2))
-        self.clock = clock
-        self.lock = threading.Lock()
-        self.wake = threading.Event()
+    def __init__(self, min_interval=600, max_interval=3600,
+                 clock=time.monotonic, wall_clock=time.time, idle_after=180,
+                 poll_interval=15, initial=None):
         self.interval = min_interval
-        self.avg_gap = None
+        self.max_interval = max_interval
+        self.clock = clock
+        self.wall_clock = wall_clock
+        self.idle_after = idle_after
+        self.poll_interval = poll_interval
+        self.lock = threading.Lock()
         self.last_request = None
         self.last_request_at = None
-        self.requests = 0  # 本采集周期内的请求数
-        self.last_collect = None
-
-    def _active_interval(self):
-        gap = self.min_interval if self.avg_gap is None else self.avg_gap
-        return int(min(max(gap, self.min_interval), self.active_cap))
+        self.last_poll_at = {}
+        now, wall = clock(), wall_clock()
+        self.sources = {}
+        for name in COLLECTORS:
+            updated = (initial or {}).get(name)
+            age = max(0, wall - updated) if isinstance(updated, (int, float)) else min_interval
+            self.sources[name] = {
+                "due": now + max(0, min_interval - age),
+                "lease": None, "lease_until": 0, "failures": 0,
+            }
 
     def on_request(self):
-        now = self.clock()
         with self.lock:
-            if self.last_request is not None:
-                gap = now - self.last_request
-                # 长时间空闲后的第一次请求视为新一轮访问，重新统计平均间隔。
-                if gap > self.max_interval:
-                    self.avg_gap = None
-                else:
-                    self.avg_gap = gap if self.avg_gap is None else 0.7 * self.avg_gap + 0.3 * gap
-            self.last_request = now
-            self.last_request_at = int(time.time())
-            self.requests += 1
-            active = self._active_interval()
-            if (self.interval > active and self.last_collect is not None
-                    and now - self.last_collect >= active and not self.wake.is_set()):
-                log("空闲后收到终端请求，缓存已 %d 秒未更新，立即采集" % (now - self.last_collect))
-                self.wake.set()
+            self.last_request = self.clock()
+            self.last_request_at = int(self.wall_clock())
 
-    def start_round(self):
-        with self.lock:
-            self.wake.clear()
-            self.last_collect = self.clock()
+    def _active(self, now):
+        return self.last_request is not None and now - self.last_request < self.idle_after
 
-    def next_delay(self):
+    def _failed(self, source, now):
+        source["lease"] = None
+        source["failures"] += 1
+        source["due"] = now + min(self.max_interval, self.interval * 2 ** min(source["failures"] - 1, 10))
+
+    def _instruction(self, name, now, claim=False):
+        source = self.sources[name]
+        if source["lease"] and now >= source["lease_until"]:
+            self._failed(source, now)
+        active = self._active(now)
+        query_now = False
+        if not active:
+            reason = "no_clients"
+        elif source["lease"]:
+            reason = "in_progress"
+        elif source["due"] > now:
+            reason = "retry_backoff" if source["failures"] else "fresh"
+        else:
+            reason = "due"
+            if claim:
+                source["lease"] = uuid.uuid4().hex
+                source["lease_until"] = now + COLLECT_TIMEOUTS.get(name, COLLECT_TIMEOUT)
+                query_now = True
+        due = max(source["due"], source["lease_until"] if source["lease"] else now)
+        delay = max(0, math.ceil(due - now)) if active else None
+        return {
+            "collector": name,
+            "query_now": query_now,
+            "paused": not active,
+            "reason": reason,
+            "poll_after_seconds": min(self.poll_interval, max(1, delay)) if delay is not None else self.poll_interval,
+            "next_query_after_seconds": delay,
+            "lease_id": source["lease"] if query_now else None,
+        }
+
+    def poll(self, name):
         with self.lock:
-            if self.requests:
-                self.interval = self._active_interval()
-            else:
-                self.interval = min(self.interval * 2, self.max_interval)
-            self.requests = 0
-            return self.interval
+            self.last_poll_at[name] = int(self.wall_clock())
+            return self._instruction(name, self.clock(), claim=True)
+
+    def submit(self, name, lease, save):
+        with self.lock:
+            source = self.sources[name]
+            now = self.clock()
+            if lease and (source["lease"] != lease or now >= source["lease_until"]):
+                raise Conflict("采集租约已失效，请重新轮询")
+            save()
+            source["due"] = now + self.interval
+            source["failures"] = 0
+            if lease:
+                source["lease"] = None
+            return self._instruction(name, now)
+
+    def failure(self, name, lease):
+        with self.lock:
+            source = self.sources[name]
+            if not lease or source["lease"] != lease:
+                raise Conflict("采集租约已失效，请重新轮询")
+            self._failed(source, self.clock())
+            return self._instruction(name, self.clock())
 
     def status(self):
         with self.lock:
             return {
                 "collect_interval_seconds": self.interval,
-                "avg_request_gap_seconds": None if self.avg_gap is None else round(self.avg_gap, 1),
+                "collection_paused": not self._active(self.clock()),
+                "collector_poll_seconds": self.poll_interval,
+                "idle_after_seconds": self.idle_after,
                 "last_display_request_utc": utc(self.last_request_at) if self.last_request_at else None,
+                "last_collector_poll_utc": {name: utc(at) for name, at in self.last_poll_at.items()},
             }
 
 
-def collect_forever(names, push_url, scheduler):
-    while True:
-        scheduler.start_round()
-        for name in names:
-            run_collector(name, push_url)
-        previous = scheduler.interval
-        delay = scheduler.next_delay()
-        if delay != previous:
-            log("采集间隔 %d → %d 秒" % (previous, delay))
-        scheduler.wake.wait(delay)
+def supervise_collector(name, push_url, stop):
+    """常驻采集器只根据 HTTP 指令访问上游；退出后重启，服务关闭时回收子进程。"""
+    while not stop.is_set():
+        proc = None
+        try:
+            proc = subprocess.Popen(
+                [sys.executable, "-u", os.path.join(BASE_DIR, COLLECTORS[name]),
+                 "--push", push_url, "--follow"], stdin=subprocess.DEVNULL,
+            )
+            while not stop.wait(1):
+                if proc.poll() is not None:
+                    log("采集器 %s 退出 (%s)，15 秒后重启" % (name, proc.returncode))
+                    break
+        except OSError:
+            log("无法启动采集器 %s，15 秒后重试" % name)
+        finally:
+            if proc is not None and proc.poll() is None:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait()
+        stop.wait(15)
 
 
 class Store:
     def __init__(self, path):
         self.path = path
         self.lock = threading.Lock()
-        self.data = {"subscriptions": {}, "messages": [], "weather": None}
+        self.data = {"subscriptions": {}, "energy": None, "messages": [], "weather": None}
         if os.path.exists(path):
             with open(path, encoding="utf-8") as f:
                 self.data.update(json.load(f))
@@ -419,6 +578,13 @@ class Store:
 class Handler(BaseHTTPRequestHandler):
     server_version = "DisplayServer/1"
     protocol_version = "HTTP/1.1"
+
+    def log_request(self, code="-", size="-"):
+        route = self._route()
+        if (code == 200 and self.command == "POST" and route and
+                len(route) == 3 and route[0] == "collectors" and route[2] == "poll"):
+            return  # 正常心跳不刷日志，保留失败及实际数据更新日志。
+        super().log_request(code, size)
 
     def _send(self, status, body):
         if not isinstance(body, bytes):
@@ -508,7 +674,9 @@ class Handler(BaseHTTPRequestHandler):
                 (self.command == "POST" and len(route) == 1) or (self.command == "DELETE" and len(route) == 2))):
             return self._error(403, "消息 token 只能 POST /v1/messages 或 DELETE /v1/messages/<id>")
         handler = {
+            ("collectors", 2): self._collector,
             ("subscriptions", 1): self._subscription,
+            ("energy", 0): self._energy,
             ("messages", 0): self._messages,
             ("messages", 1): self._messages,
             ("weather", 0): self._weather,
@@ -534,12 +702,33 @@ class Handler(BaseHTTPRequestHandler):
         store = self.server.store
         if self.command == "PUT":
             item = clean_subscription(sub_id, body, now)
-            store.write(lambda data: data["subscriptions"].__setitem__(sub_id, item))
-            return 200, item
+            save = lambda: store.write(lambda data: data["subscriptions"].__setitem__(sub_id, item))
+            instruction = self._save_collection(sub_id, save)
+            return 200, dict(item, collection=instruction)
         if self.command == "DELETE":
             removed = store.write(lambda data: data["subscriptions"].pop(sub_id, None))
             return (200, {"deleted": sub_id}) if removed else (404, {"error": "订阅不存在"})
         return 405, {"error": "method not allowed"}
+
+    def _save_collection(self, name, save):
+        scheduler = self.server.scheduler
+        if scheduler and name in scheduler.sources:
+            return scheduler.submit(name, self.headers.get("X-Collection-Lease"), save)
+        save()
+        return None
+
+    def _collector(self, args, body, now, role):
+        name, action = args
+        scheduler = self.server.scheduler
+        if not scheduler or name not in scheduler.sources or action not in ("poll", "failure"):
+            return 404, {"error": "未知采集器或调度操作"}
+        if self.command != "POST":
+            return 405, {"error": "method not allowed"}
+        if not isinstance(body, dict):
+            raise BadRequest("调度请求必须是 JSON 对象")
+        instruction = (scheduler.poll(name) if action == "poll" else
+                       scheduler.failure(name, body.get("lease_id")))
+        return 200, {"collection": instruction}
 
     def _messages(self, args, body, now, role):
         store = self.server.store
@@ -608,11 +797,24 @@ class Handler(BaseHTTPRequestHandler):
         store = self.server.store
         if self.command == "PUT":
             weather = clean_weather(body, now) if body is not None else None
-            store.write(lambda data: data.__setitem__("weather", weather))
-            return 200, {"weather": weather}
+            save = lambda: store.write(lambda data: data.__setitem__("weather", weather))
+            instruction = self._save_collection("weather", save)
+            return 200, {"weather": weather, "collection": instruction}
         if self.command == "DELETE":
             store.write(lambda data: data.__setitem__("weather", None))
             return 200, {"weather": None}
+        return 405, {"error": "method not allowed"}
+
+    def _energy(self, args, body, now, role):
+        store = self.server.store
+        if self.command == "PUT":
+            energy = clean_energy(body, now) if body is not None else None
+            save = lambda: store.write(lambda data: data.__setitem__("energy", energy))
+            instruction = self._save_collection("energy", save)
+            return 200, {"energy": with_utc(energy), "collection": instruction}
+        if self.command == "DELETE":
+            store.write(lambda data: data.__setitem__("energy", None))
+            return 200, {"energy": None}
         return 405, {"error": "method not allowed"}
 
 
@@ -622,8 +824,10 @@ def main():
     parser.add_argument("--port", type=int, default=8007, help="监听端口 (默认 8007)")
     parser.add_argument("--state", default=DEFAULT_STATE, help="数据保存文件 (默认脚本同目录 display_state.json)")
     parser.add_argument("--stale-after", type=int, default=900, help="stale_after_seconds，30–86400 (默认 900)")
-    parser.add_argument("--min-interval", type=int, default=60, help="请求频繁时的最短采集间隔秒数 (默认 60)")
-    parser.add_argument("--max-interval", type=int, default=3600, help="无请求时的最长采集间隔秒数 (默认 3600)")
+    parser.add_argument("--min-interval", "--refresh-interval", type=int, default=600, help="有客户端时的刷新间隔秒数 (默认 600)")
+    parser.add_argument("--max-interval", type=int, default=3600, help="查询失败时的最大退避秒数 (默认 3600)")
+    parser.add_argument("--idle-after", type=int, default=180, help="多少秒无客户端读取后暂停上游查询 (默认 180)")
+    parser.add_argument("--poll-interval", type=int, default=15, help="采集器询问调度指令的间隔秒数 (默认 15)")
     parser.add_argument("--collectors", default=",".join(COLLECTORS),
                         help="要定时运行的采集脚本，空字符串表示关闭 (默认 %(default)s)")
     args = parser.parse_args()
@@ -635,6 +839,8 @@ def main():
         parser.error("未知的采集脚本: %s（可选 %s）" % (", ".join(unknown), ", ".join(COLLECTORS)))
     if not 60 <= args.min_interval <= args.max_interval <= 86400:
         parser.error("需满足 60 <= --min-interval <= --max-interval <= 86400，避免频繁请求订阅平台")
+    if not 1 <= args.poll_interval <= args.idle_after <= 86400:
+        parser.error("需满足 1 <= --poll-interval <= --idle-after <= 86400")
 
     # token 只从环境变量读取，避免出现在进程列表中。
     config = {
@@ -653,7 +859,14 @@ def main():
     server.daemon_threads = True
     server.store = Store(args.state)
     server.config = config
-    server.scheduler = None
+    initial = server.store.read(lambda data: dict(
+        {name: item.get("updated_at") for name, item in data["subscriptions"].items()},
+        weather=(data.get("weather") or {}).get("updated_at"),
+        energy=(data.get("energy") or {}).get("updated_at")))
+    server.scheduler = Scheduler(args.min_interval, args.max_interval,
+                                 idle_after=args.idle_after, poll_interval=args.poll_interval, initial=initial)
+    stop = threading.Event()
+    workers = []
     print("显示服务已启动: http://%s:%d/v1/display  状态文件: %s" % (args.host, args.port, args.state), file=sys.stderr)
     if not config["read_token"]:
         print("提示: 未设置 DISPLAY_READ_TOKEN，读取接口无需鉴权。", file=sys.stderr)
@@ -661,15 +874,23 @@ def main():
         # 子进程继承环境变量中的 DISPLAY_WRITE_TOKEN，经本机地址提交。
         local_host = "127.0.0.1" if args.host in ("", "0.0.0.0", "::") else args.host
         push_url = "http://%s:%d" % (local_host, args.port)
-        server.scheduler = Scheduler(args.min_interval, args.max_interval, args.stale_after)
-        threading.Thread(target=collect_forever, args=(collectors, push_url, server.scheduler), daemon=True).start()
-        print("定时采集: %s，间隔 %d–%d 秒，随请求动态调整" % (", ".join(collectors), args.min_interval,
-              args.max_interval), file=sys.stderr)
+        for name in collectors:
+            worker = threading.Thread(target=supervise_collector, args=(name, push_url, stop), daemon=True)
+            workers.append(worker)
+            worker.start()
+        log("按需采集: %s；刷新 %d 秒，空闲 %d 秒后暂停，每 %d 秒轮询指令" % (
+            ", ".join(collectors), args.min_interval, args.idle_after, args.poll_interval))
+    def shutdown(signum, frame):
+        raise KeyboardInterrupt
+    signal.signal(signal.SIGTERM, shutdown)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
+        stop.set()
+        for worker in workers:
+            worker.join(timeout=7)
         server.server_close()
 
 

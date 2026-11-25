@@ -1,6 +1,42 @@
 # 显示服务数据采集
 
-`./start.sh` 启动服务及定时采集。搬瓦工通过 KiwiVM `getServiceInfo` 查询当前计费月的流量，订阅 ID 为 `banwagong`，默认排在 Claude、Codex、Grok 后面。
+`./start.sh` 启动服务及按需采集。搬瓦工通过 KiwiVM `getServiceInfo` 查询当前计费月的流量，订阅 ID 为 `banwagong`，默认排在 Claude、Codex、Grok、Gemini 后面。
+
+## Gemini 订阅额度
+
+`gemini_usage.py` 通过本机 `agy --print /usage --output-format json` 只读斜杠命令查询 Antigravity（Gemini Models）的 5 小时与 7 天额度，不发起模型推理也不消耗 token，订阅 ID 为 `gemini`。默认已加入服务端采集列表，也可单独执行：
+
+```sh
+python3 gemini_usage.py          # 人类可读输出
+python3 gemini_usage.py --json   # agy /usage 原始 JSON
+python3 gemini_usage.py --push   # 单次采集并提交到本机显示服务
+```
+
+## 个人能量（预留）
+
+服务端提供 `PUT /v1/energy` 与 `DELETE /v1/energy`，并在 `GET /v1/display` 顶层返回 `energy`（未设置时为 `null`，客户端自动隐藏）。规划与字段说明见 [docs/energy-bar-plan.md](../docs/energy-bar-plan.md)，可用 `energy_usage.py` 手动推送或清空：
+
+```sh
+python3 energy_usage.py --level 78 --status 充沛 --note "睡眠 7.5h" --push
+python3 energy_usage.py --clear --push
+```
+
+## HP（Oura）
+
+`hp_usage.py` 读取 Oura 数据估算 HP，并推送到 `PUT /v1/energy`。
+
+1. 在 [cloud.ouraring.com](https://cloud.ouraring.com) 创建应用，Redirect URI 填 `http://localhost:8765/callback`。
+2. 复制 `oura.env.example` 为 `oura.env`，填入 client id 与 secret。
+3. 授权：`python3 oura_auth.py login`，token 保存在 `oura_token.json`（已被 git 忽略）。
+4. 启动：`python3 hp_usage.py --push --follow`，每 600 秒一轮，对齐到整 10 分钟；单轮出错只记日志。
+
+其他用法：`python3 hp_usage.py`（打印摘要）、`--json`、`--explain`（当日每格明细）、`--params FILE`（覆盖模型参数）。
+
+`energy_usage.py` 手动写入的值会在 `hp_usage.py` 的下一轮被覆盖。运行 HP 常驻进程时不要再手动写入。
+
+## Grok 订阅额度
+
+`grok_usage.py` 复用官方 Grok CLI `grok login` 保存的 `~/.grok/auth.json`，只读查询 SuperGrok 等个人订阅的周额度（Grok、Grok Bot、Cursor 共用同一个周额度池，`productUsage` 中列出 Grok Bot 等分项）。说明见 [COLLECTION_API.md](COLLECTION_API.md#grok-订阅额度)。
 
 ## 搬瓦工配置
 
@@ -56,7 +92,7 @@ python3 banwagong_usage.py --push --interval 300
 - 窗口新增的三个字节字段是可选扩展。写入流量窗口必须同时提供 `total_bytes`、`used_bytes`；服务端计算剩余量和百分比，若提交了不一致的 `remaining_bytes` 则拒绝。原有仅百分比的窗口不受影响。
 - 采集时间不会随读取刷新；服务端沿用现有 `*_utc` 调试字段。
 
-Lua 客户端 1.1.0 起保留全部订阅，并根据数量动态排版：四项同屏、五到六项双列、更多项自动分页。流量窗口自动显示实际剩余 / 总容量，无需按提供商 ID 适配。旧版 1.0.0 仍只显示前三项，需要升级设备上的应用文件。
+Lua 客户端 1.1.0 起保留全部订阅，始终单列动态排版：每页最多六项同屏、更多项自动分页。流量窗口自动显示实际剩余 / 总容量，无需按提供商 ID 适配。旧版 1.0.0 仍只显示前三项，需要升级设备上的应用文件。
 
 ## 验证
 
