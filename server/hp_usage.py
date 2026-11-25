@@ -79,6 +79,8 @@ def cached_hr_quiet(day, fetch, path=None):
     if cached and cached["day"] == day.isoformat():
         return cached["hr_quiet"]
     hr_quiet, valid_days = fetch(day)
+    if hr_quiet is None:  # 暂时拿不到基线：不缓存，下一轮重试
+        return None
     try:
         _write_cache(path, {"day": day.isoformat(), "hr_quiet": hr_quiet, "valid_days": valid_days})
     except OSError as exc:
@@ -110,11 +112,11 @@ def load_params(path):
         sys.exit("--params %s: %s" % (path, exc))
 
 
-def compute_result(args, now, tz=None):
+def compute_result(args, now, p=None, tz=None):
     """取数并计算，返回 Result；异常原样抛出，由调用方映射。"""
     global _PERSONAL_INFO
     tz = tz or local_tz()
-    p = load_params(getattr(args, "params", None))
+    p = p if p is not None else hp_model.make_params()
     data = oura_client.fetch_all(now, tz)
     if _PERSONAL_INFO is None:
         try:
@@ -129,9 +131,9 @@ def compute_result(args, now, tz=None):
     return hp_model.compute(now, data, hr_quiet, p, tz, age=args.age)
 
 
-def cycle(args, now):
+def cycle(args, now, p=None):
     try:
-        return build_item(compute_result(args, now), now)
+        return build_item(compute_result(args, now, p), now)
     except oura_auth.AuthRequired:
         return auth_item(now)
     except oura_client.RateLimited as exc:
@@ -189,7 +191,7 @@ def main(argv=None):
             now = hp_model.parse_ts(args.now)
         except ValueError:
             sys.exit("--now: 无法解析 %r" % args.now)
-    load_params(args.params)  # 尽早校验
+    p = load_params(args.params)  # 只加载一次；错误在此退出
     if args.report:
         print(report(args, now))
         return
@@ -198,19 +200,19 @@ def main(argv=None):
             display_push.push(args.push, item, path=ENERGY_PATH)
             log("已提交 %s" % energy_usage.summary(item))
         try:
-            follow(args, lambda t: cycle(args, t), push_fn)
+            follow(args, lambda t: cycle(args, t, p), push_fn)
         except KeyboardInterrupt:
             pass
         return
     if args.explain:
         try:
-            res = compute_result(args, now)
+            res = compute_result(args, now, p)
         except (RuntimeError, OSError) as exc:
             sys.exit(str(exc))
         print(explain(res, local_tz()))
         item = build_item(res, now)
     else:
-        item = cycle(args, now)
+        item = cycle(args, now, p)
         if item is None:
             sys.exit("本轮未取得数据，详见 stderr。")
     if args.json:

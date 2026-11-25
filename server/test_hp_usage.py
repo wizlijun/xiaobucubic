@@ -38,6 +38,10 @@ def result(level=55, status="尚可", trend="draining", note="生理压力高"):
                            steps=[], anchor_day=None, readiness=None, profile=None)
 
 
+def hp_hp_item():
+    return hp_usage.build_item(result(), 5)
+
+
 def args(**kw):
     base = dict(age=None, params=None, now=None, push=None, follow=False, json=False,
                 explain=False, report=False, days=28)
@@ -164,6 +168,49 @@ class CacheTests(unittest.TestCase):
             self.assertEqual(hp_usage.cached_hr_quiet(date(2026, 11, 25), lambda day: (50.0, 3), path), 50.0)
 
 
+class BaselineRetryTests(unittest.TestCase):
+    def test_none_baseline_not_cached(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = d + "/c.json"
+            results = [(None, 0), (58.0, 12)]
+            calls = []
+
+            def fetch(day):
+                calls.append(day)
+                return results.pop(0)
+            day = date(2026, 11, 25)
+            self.assertIsNone(hp_usage.cached_hr_quiet(day, fetch, path))
+            self.assertFalse(os.path.exists(path))
+            self.assertEqual(hp_usage.cached_hr_quiet(day, fetch, path), 58.0)
+            self.assertEqual(hp_usage.cached_hr_quiet(day, fetch, path), 58.0)
+            self.assertEqual(len(calls), 2)
+
+
+class RealAuthChainTests(unittest.TestCase):
+    def run_cycle(self, content):
+        with tempfile.TemporaryDirectory() as d:
+            path = d + "/oura_token.json"
+            if content is not None:
+                with open(path, "w") as f:
+                    f.write(content)
+            defaults = (path, None, None, False)
+            with patch.object(oura_auth.access_token, "__defaults__", defaults), \
+                 patch.object(hp_usage, "CACHE_FILE", d + "/hp_cache.json"), \
+                 patch.object(hp_usage, "_PERSONAL_INFO", None), \
+                 patch("urllib.request.urlopen", side_effect=AssertionError("network reached")):
+                return hp_usage.cycle(args(), 1795581200)
+
+    def test_missing_token_file(self):
+        item = self.run_cycle(None)
+        self.assertEqual(item["status"], "待授权")
+        self.assertIsNone(item["level_percent"])
+
+    def test_corrupt_token_file(self):
+        item = self.run_cycle("{bad")
+        self.assertEqual(item["status"], "待授权")
+        self.assertIsNone(item["level_percent"])
+
+
 class FollowTests(unittest.TestCase):
     def test_follow_survives_push_error(self):
         pushed = []
@@ -223,6 +270,44 @@ class CliTests(unittest.TestCase):
             with self.assertRaises(SystemExit) as cm:
                 hp_usage.main(["--params", path])
             self.assertIn("bogus", str(cm.exception))
+
+    def test_params_loaded_once_in_main_and_passed_down(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = d + "/p.json"
+            with open(path, "w") as f:
+                json.dump({}, f)
+            with patch.object(hp_usage, "cycle", return_value=hp_hp_item()) as cy, \
+                 patch("builtins.print"):
+                hp_usage.main(["--params", path, "--json"])
+            self.assertEqual(cy.call_args.args[2], hp_model.make_params())
+
+    def test_params_not_reread_in_cycle(self):
+        with tempfile.TemporaryDirectory() as d:
+            with patch.object(hp_usage, "load_params", side_effect=SystemExit("no")), \
+                 patch.object(hp_usage, "CACHE_FILE", d + "/c.json"), \
+                 patch.object(hp_usage, "_PERSONAL_INFO", None), \
+                 patch.object(oura_client, "fetch_all", return_value={}), \
+                 patch.object(oura_client, "personal_info", return_value={}), \
+                 patch.object(oura_client, "fetch_baseline_hr", return_value=[]), \
+                 patch.object(hp_model, "compute", return_value=result()):
+                self.assertIsNotNone(hp_usage.cycle(args(), 1795581200))
+
+    def test_push_wiring(self):
+        item = hp_hp_item()
+        with patch.object(hp_usage, "cycle", return_value=item), \
+             patch.object(display_push, "push") as push, patch("builtins.print"):
+            hp_usage.main(["--push", "http://x:1"])
+        push.assert_called_once_with("http://x:1", item, path="/v1/energy")
+
+    def test_push_follow_reaches_follow(self):
+        with patch.object(hp_usage, "follow") as fol, \
+             patch.object(display_push, "push") as push, \
+             patch.object(hp_usage, "cycle", return_value=hp_hp_item()):
+            hp_usage.main(["--push", "http://x:1", "--follow"])
+            self.assertEqual(fol.call_count, 1)
+            fol.call_args.args[2](hp_hp_item())  # push_fn
+        self.assertEqual(push.call_args.kwargs["path"], "/v1/energy")
+        self.assertEqual(push.call_args.args[0], "http://x:1")
 
     def test_now_parsed_and_json_output(self):
         out = []
