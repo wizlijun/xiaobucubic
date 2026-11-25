@@ -5,7 +5,7 @@ import json
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 
 import oura_auth
 

@@ -4,7 +4,7 @@ import io
 import json
 import unittest
 import urllib.error
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from unittest import mock
 from urllib.parse import parse_qs, urlsplit
 from zoneinfo import ZoneInfo
@@ -139,7 +139,7 @@ class FetchAllTest(unittest.TestCase):
         return run(pages, oura_client.fetch_all, now or now_ts(self.D), tz, token=Tok())
 
     def days(self, *offsets):
-        return [{"day": (self.D + __import__("datetime").timedelta(days=o)).isoformat()} for o in offsets]
+        return [{"day": (self.D + timedelta(days=o)).isoformat()} for o in offsets]
 
     def test_filters_days_and_params(self):
         sleep = self.days(-31, -30, 0, 1, 2)
