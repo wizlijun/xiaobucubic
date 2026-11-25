@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""用 Oura 数据估算 HP（个人能量），可单次计算、推送，或常驻每 10 分钟一轮。
+"""用 Oura 数据估算 HP（个人能量），可单次计算、推送，或常驻按显示服务调度计算。
 
 用法:
     python3 hp_usage.py                  # 计算一次，打印摘要
     python3 hp_usage.py --json           # 打印 payload
     python3 hp_usage.py --explain        # 打印当日每格明细
-    python3 hp_usage.py --push --follow  # 常驻推送到显示服务
+    python3 hp_usage.py --push --follow  # 常驻：由 display_server 调度，有终端读取时才访问 Oura
 """
 from __future__ import annotations
 
@@ -27,7 +27,6 @@ import oura_client
 CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hp_cache.json")
 ENERGY_PATH = "/v1/energy"
 STALE_AFTER = 1800
-INTERVAL = 600
 
 _PERSONAL_INFO = None  # 进程内只取一次
 
@@ -150,20 +149,15 @@ def cycle(args, now, p=None):
     return None
 
 
-def follow(args, cycle_fn, push_fn, sleep=time.sleep, clock=time.time, max_cycles=None):
-    n = 0
-    while True:
-        now = int(clock())
-        try:
-            item = cycle_fn(now)
-            if item is not None:
-                push_fn(item)
-        except Exception as exc:  # 单轮出错只记日志
-            log("本轮出错: %s: %s" % (type(exc).__name__, exc))
-        n += 1
-        if max_cycles is not None and n >= max_cycles:
-            return
-        sleep(INTERVAL - (clock() % INTERVAL) or INTERVAL)
+def collect(args, p=None, clock=time.time):
+    """供 display_push.run 调用：仅在服务端发放租约时计算一轮；失败一律转成 RuntimeError 以上报 /failure。"""
+    try:
+        item = cycle(args, int(clock()), p)
+    except Exception as exc:  # 单轮出错只上报失败，进程继续
+        raise RuntimeError("本轮出错: %s: %s" % (type(exc).__name__, exc))
+    if item is None:
+        raise RuntimeError("本轮未取得数据")
+    return item
 
 
 def _stress_series(rows, key):
@@ -280,11 +274,8 @@ def main(argv=None):
         print(report(args, now, p))
         return
     if args.push and args.follow:
-        def push_fn(item):
-            display_push.push(args.push, item, path=ENERGY_PATH)
-            log("已提交 %s" % energy_usage.summary(item))
         try:
-            follow(args, lambda t: cycle(args, t, p), push_fn)
+            display_push.run(args, lambda: collect(args, p), path=ENERGY_PATH, describe=energy_usage.summary)
         except KeyboardInterrupt:
             pass
         return

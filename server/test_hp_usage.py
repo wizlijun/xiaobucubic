@@ -237,13 +237,6 @@ class ReportWindowTests(unittest.TestCase):
         self.assertEqual(calls["workout"]["start_date"], "2026-11-24")
         self.assertEqual(calls["sleep"]["end_date"], "2026-11-28")
 
-    def test_follow_log_has_exception_type(self):
-        logged = []
-        with patch.object(hp_usage, "log", side_effect=logged.append):
-            hp_usage.follow(args(), lambda t: (_ for _ in ()).throw(KeyError("k")), lambda i: None,
-                            sleep=lambda s: None, clock=lambda: 1000.0, max_cycles=1)
-        self.assertTrue(any("KeyError" in m for m in logged), logged)
-
 
 class RealAuthChainTests(unittest.TestCase):
     def run_cycle(self, content):
@@ -270,49 +263,42 @@ class RealAuthChainTests(unittest.TestCase):
         self.assertIsNone(item["level_percent"])
 
 
-class FollowTests(unittest.TestCase):
-    def test_follow_survives_push_error(self):
-        pushed = []
+class CollectTests(unittest.TestCase):
+    def test_collect_returns_item(self):
+        item = hp_hp_item()
+        with patch.object(hp_usage, "cycle", return_value=item) as cy:
+            self.assertEqual(hp_usage.collect(args(), {"x": 1}, clock=lambda: 1234.5), item)
+        self.assertEqual(cy.call_args.args[1:], (1234, {"x": 1}))
 
-        def push_fn(item):
-            pushed.append(item)
-            if len(pushed) == 1:
-                raise OSError("down")
-        cycles = []
-        sleeps = []
-        hp_usage.follow(args(), lambda now: cycles.append(now) or {"n": len(cycles)}, push_fn,
-                        sleep=sleeps.append, clock=lambda: 1000, max_cycles=2)
-        self.assertEqual(len(cycles), 2)
-        self.assertEqual(len(pushed), 2)
-        self.assertEqual(sleeps, [200])
+    def test_collect_none_raises_runtime_error(self):
+        with patch.object(hp_usage, "cycle", return_value=None):
+            with self.assertRaises(RuntimeError):
+                hp_usage.collect(args(), None)
 
-    def test_follow_survives_cycle_error_and_skips_none(self):
-        outcomes = [RuntimeError("x"), None, {"a": 1}]
-        pushed = []
-
-        def cycle_fn(now):
-            o = outcomes.pop(0)
-            if isinstance(o, Exception):
-                raise o
-            return o
-        hp_usage.follow(args(), cycle_fn, pushed.append, sleep=lambda s: None, clock=lambda: 5, max_cycles=3)
-        self.assertEqual(pushed, [{"a": 1}])
-
-    def test_follow_aligns_to_600(self):
-        sleeps = []
-        hp_usage.follow(args(), lambda n: None, lambda i: None, sleep=sleeps.append,
-                        clock=lambda: 1000, max_cycles=2)
-        self.assertEqual(sleeps, [200])
-        sleeps.clear()
-        hp_usage.follow(args(), lambda n: None, lambda i: None, sleep=sleeps.append,
-                        clock=lambda: 1200, max_cycles=2)
-        self.assertEqual(sleeps, [600])
+    def test_collect_wraps_unexpected_error_with_type(self):
+        with patch.object(hp_usage, "cycle", side_effect=KeyError("k")):
+            with self.assertRaisesRegex(RuntimeError, "KeyError"):
+                hp_usage.collect(args(), None)
 
     def test_keyboard_interrupt_propagates(self):
-        def boom(now):
-            raise KeyboardInterrupt
-        with self.assertRaises(KeyboardInterrupt):
-            hp_usage.follow(args(), boom, lambda i: None, sleep=lambda s: None, clock=lambda: 1, max_cycles=2)
+        with patch.object(hp_usage, "cycle", side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                hp_usage.collect(args(), None)
+
+
+class SchedulerIntegrationTests(unittest.TestCase):
+    def test_energy_collector_is_hp_usage(self):
+        self.assertEqual(display_server.COLLECTORS["energy"], "hp_usage.py")
+
+    def test_energy_lease_outlives_daily_baseline_fetch(self):
+        now = [0]
+        scheduler = display_server.Scheduler(clock=lambda: now[0], wall_clock=lambda: 1800000000)
+        scheduler.on_request()
+        lease = scheduler.poll("energy")["lease_id"]
+        self.assertIsNotNone(lease)
+        now[0] = 240  # 每日首轮拉 28 天基线约 2.5 分钟
+        scheduler.submit("energy", lease, lambda: None)
+        self.assertGreater(display_server.COLLECT_TIMEOUTS["energy"], 240)
 
 
 class ReportTests(unittest.TestCase):
@@ -431,15 +417,17 @@ class CliTests(unittest.TestCase):
             hp_usage.main(["--push", "http://x:1"])
         push.assert_called_once_with("http://x:1", item, path="/v1/energy")
 
-    def test_push_follow_reaches_follow(self):
-        with patch.object(hp_usage, "follow") as fol, \
-             patch.object(display_push, "push") as push, \
-             patch.object(hp_usage, "cycle", return_value=hp_hp_item()):
+    def test_push_follow_uses_scheduled_run(self):
+        item = hp_hp_item()
+        with patch.object(display_push, "run") as run, \
+             patch.object(hp_usage, "cycle", return_value=item):
             hp_usage.main(["--push", "http://x:1", "--follow"])
-            self.assertEqual(fol.call_count, 1)
-            fol.call_args.args[2](hp_hp_item())  # push_fn
-        self.assertEqual(push.call_args.kwargs["path"], "/v1/energy")
-        self.assertEqual(push.call_args.args[0], "http://x:1")
+            self.assertEqual(run.call_count, 1)
+            a = run.call_args
+            self.assertEqual(a.args[0].push, "http://x:1")
+            self.assertEqual(a.args[0].collector, "energy")
+            self.assertEqual(a.kwargs["path"], "/v1/energy")
+            self.assertEqual(a.args[1](), item)  # collect
 
     def test_now_parsed_and_json_output(self):
         out = []
