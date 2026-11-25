@@ -37,7 +37,8 @@ def log(msg):
 
 def build_item(result, now):
     return energy_usage.build_payload(
-        level=result.level, status=result.status, trend=result.trend, note=result.note,
+        level=result.level, status=result.line or result.status, trend=result.trend,
+        note=None if result.line else result.note,
         source="estimated", stale_after=STALE_AFTER, updated_at=now)
 
 

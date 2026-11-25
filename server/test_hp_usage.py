@@ -62,6 +62,13 @@ class ItemTests(unittest.TestCase):
         self.assertEqual(item["stale_after_seconds"], 1800)
         self.assertEqual(item["updated_at"], 1795581200)
 
+    def test_line_replaces_status_and_note(self):
+        r = result()
+        r.line = "睡前约34% · 宜放松"
+        item = hp_usage.build_item(r, 1795581200)
+        self.assertEqual(item["status"], "睡前约34% · 宜放松")
+        self.assertNotIn("note", item)
+
     def test_null_item(self):
         item = hp_usage.build_item(result(level=None, status="待同步", trend=None, note=None), 1795581200)
         self.assertIsNone(item["level_percent"])

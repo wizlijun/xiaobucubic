@@ -106,7 +106,18 @@ def fetch_all(now, tz, token=oura_auth.access_token):
         "daily_activity": _daily("daily_activity", d - one, d + one, token),
         "workout": _daily("workout", d - one, d + one, token),
         "heartrate": _heartrate(_midnight(d - one, tz), datetime.fromtimestamp(now, tz), token),
+        "daily_stress": _optional_daily("daily_stress", d, d, token),
     }
+
+
+def _optional_daily(name, lo, hi, token):
+    """附加数据：网络或接口出错时返回空列表；授权失效、限流照常抛出。"""
+    try:
+        return _daily(name, lo, hi, token)
+    except (oura_auth.AuthRequired, RateLimited):
+        raise
+    except (RuntimeError, OSError):
+        return []
 
 
 def fetch_baseline_hr(day, tz, token=oura_auth.access_token):

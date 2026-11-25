@@ -165,7 +165,9 @@ class FetchAllTest(unittest.TestCase):
             {"timestamp": "2026-11-25T03:00:00Z"},         # 11:00 local, kept
             {"timestamp": "2026-11-25T04:00:01Z"},         # 12:00:01 local > now
         ]}
-        out, reqs = self.run_all([{"data": sleep}, {"data": ready}, {"data": act}, {"data": work}, hr])
+        stress = self.days(-1, 0, 1)
+        out, reqs = self.run_all([{"data": sleep}, {"data": ready}, {"data": act}, {"data": work}, hr,
+                                  {"data": stress}])
         self.assertEqual([r["day"] for r in out["sleep"]],
                          ["2026-10-26", "2026-11-25", "2026-11-26"])
         self.assertEqual([r["day"] for r in out["daily_readiness"]], ["2026-10-26", "2026-11-26"])
@@ -173,9 +175,12 @@ class FetchAllTest(unittest.TestCase):
         self.assertEqual([r["day"] for r in out["workout"]], ["2026-11-24"])
         self.assertEqual([r["timestamp"] for r in out["heartrate"]],
                          ["2026-11-24T00:00:00+08:00", "2026-11-25T03:00:00Z"])
-        self.assertEqual(set(out), {"sleep", "daily_readiness", "daily_activity", "workout", "heartrate"})
+        self.assertEqual(set(out), {"sleep", "daily_readiness", "daily_activity", "workout", "heartrate",
+                                    "daily_stress"})
         names = [urlsplit(r[0].full_url).path.rsplit("/", 1)[1] for r in reqs]
-        self.assertEqual(names, ["sleep", "daily_readiness", "daily_activity", "workout", "heartrate"])
+        self.assertEqual(names, ["sleep", "daily_readiness", "daily_activity", "workout", "heartrate",
+                                 "daily_stress"])
+        self.assertEqual([r["day"] for r in out["daily_stress"]], ["2026-11-25"])
         # query padding D-31..D+2 for sleep, D-2..D+2 for activity
         self.assertEqual(q(reqs[0][0])["start_date"], ["2026-10-25"])
         self.assertEqual(q(reqs[0][0])["end_date"], ["2026-11-27"])
@@ -188,10 +193,23 @@ class FetchAllTest(unittest.TestCase):
         # 2026-11-25 20:00 in LA is already 11-26 in Shanghai
         now = int(datetime(2026, 11, 25, 20, tzinfo=LA).timestamp())
         empty = {"data": []}
-        _, reqs = self.run_all([empty] * 5, tz=LA, now=now)
+        _, reqs = self.run_all([empty] * 6, tz=LA, now=now)
         self.assertEqual(q(reqs[0][0])["start_date"], ["2026-10-25"])
         self.assertEqual(q(reqs[4][0])["start_datetime"], ["2026-11-24T00:00:00-08:00"])
         self.assertEqual(q(reqs[4][0])["end_datetime"], ["2026-11-25T20:00:00-08:00"])
+
+
+    def test_daily_stress_failure_is_not_fatal(self):
+        empty = {"data": []}
+        err = urllib.error.URLError("down")
+        out, _ = self.run_all([empty] * 5 + [err])
+        self.assertEqual(out["daily_stress"], [])
+
+    def test_daily_stress_auth_error_propagates(self):
+        empty = {"data": []}
+        with mock.patch.object(oura_client, "get", side_effect=[[]] * 5 + [oura_auth.AuthRequired("x")]):
+            with self.assertRaises(oura_auth.AuthRequired):
+                oura_client.fetch_all(now_ts(self.D), SH, token=Tok())
 
 
 class BaselineStressTest(unittest.TestCase):

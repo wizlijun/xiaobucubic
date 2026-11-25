@@ -837,3 +837,76 @@ class FixWaveTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DayLineTests(unittest.TestCase):
+    """卡片第二行：按时机给出具体数值和建议，最多 16 个字。"""
+
+    def steps(self, kind="still", rate=-2.0, hr=None, n=3):
+        from hp_model import Step
+        return [Step(at("12:00") + 300 * i, kind, rate, 50.0, hr, 1.0, 0.0) for i in range(n)]
+
+    def line(self, hhmm, level=43, note=None, steps=None, bed_min=1410, **kw):
+        from hp_model import day_line
+        return day_line(self.steps() if steps is None else steps, level, note, at(hhmm),
+                        mkprofile(bed_min=bed_min), P, TZ, **kw)
+
+    def test_unsynced_keeps_note(self):
+        self.assertEqual(self.line("15:00", note="3h未同步"), "3h未同步")
+
+    def test_first_hour_readiness_and_sleep(self):
+        self.assertEqual(self.line("08:00", note="准备度72", sleep_s=6.1 * 3600), "准备度72 · 睡6.1h")
+        self.assertEqual(self.line("08:00", note="准备度72"), "准备度72")
+
+    def test_exercise_shows_heart_rate(self):
+        self.assertEqual(self.line("15:00", note="运动中", steps=self.steps("exercise", -8, 142)),
+                         "心率142 · 运动中")
+
+    def test_stress_shows_heart_rate_and_oura_minutes(self):
+        s = self.steps("stress", -5, 92.4)
+        self.assertEqual(self.line("15:00", note="生理压力高", steps=s, stress_s=4500), "心率92 · 压力75分")
+        self.assertEqual(self.line("15:00", note="生理压力高", steps=s), "心率92 · 压力高 · 深呼吸")
+
+    def test_charging_shows_rate(self):
+        self.assertEqual(self.line("15:00", steps=self.steps("rest", 5.2)), "+5%/h · 回血中")
+        self.assertEqual(self.line("15:00", note="小憩回血", steps=self.steps("nap", 1.0)), "+1%/h · 回血中")
+
+    def test_very_low(self):
+        self.assertEqual(self.line("15:00", level=18, steps=self.steps(rate=-3)), "-3%/h · 该休息了")
+
+    def test_draining_forecast_hits_20_before_bed(self):
+        # 35% −6%/h：2.5h 后到 20%，睡点 23:30 还远
+        self.assertEqual(self.line("14:00", level=35, steps=self.steps(rate=-6)), "约2.5h后到20% · 宜小憩")
+        self.assertEqual(self.line("19:00", level=35, steps=self.steps(rate=-6)), "约2.5h后到20% · 宜放松")
+
+    def test_draining_forecast_at_bedtime(self):
+        # 43% −2%/h，21:40，习惯 02:22 入睡：睡前约 34%
+        self.assertEqual(self.line("21:40", bed_min=142), "睡前约34% · 宜放松")
+        self.assertEqual(self.line("15:00", level=70, steps=self.steps(rate=-1)), "睡前约62% · 适合专注")
+        self.assertEqual(self.line("15:00", level=55, steps=self.steps(rate=-1)), "睡前约47% · 适合轻任务")
+
+    def test_near_bedtime_low_suggests_sleep(self):
+        self.assertEqual(self.line("22:00", level=40, steps=self.steps(rate=-1)), "睡前约39% · 宜早睡")
+
+    def test_past_bedtime(self):
+        self.assertEqual(self.line("01:00", level=40, steps=self.steps(rate=-1)), "-1%/h · 该睡了")
+
+    def test_steady_shows_rate(self):
+        self.assertEqual(self.line("15:00", level=70, steps=self.steps(rate=0.4)), "+0%/h · 适合专注")
+
+    def test_never_longer_than_16(self):
+        from hp_model import day_line
+        for note in (None, "准备度100", "运动中", "生理压力高", "小憩回血", "3h未同步"):
+            for level in (0, 19, 44, 64, 100):
+                for rate in (-40.0, -0.3, 0.0, 30.0):
+                    for hh in ("03:00", "12:00", "19:00", "23:00"):
+                        out = day_line(self.steps(rate=rate, hr=188), level, note, at(hh), mkprofile(), P, TZ,
+                                       sleep_s=10.5 * 3600, stress_s=86400)
+                        self.assertLessEqual(len(out), 16, out)
+
+    def test_compute_sets_line_in_day(self):
+        d = example_day_data(until="2026-11-25T15:30:00+08:00")
+        d["daily_stress"] = [{"day": "2026-11-25", "stress_high": 4500}]
+        r = compute(parse_ts("2026-11-25T15:30:00+08:00"), d, 62, P, TZ)
+        self.assertEqual(r.note, "生理压力高")
+        self.assertTrue(r.line.endswith("压力75分"), r.line)

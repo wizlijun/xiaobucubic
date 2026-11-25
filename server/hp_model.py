@@ -494,6 +494,7 @@ class Result:
     anchor_day: str | None
     readiness: int | None
     profile: Profile | None
+    line: str | None = None  # 卡片第二行（数值 + 建议），仅白天
 
 
 def round_level(x):
@@ -542,6 +543,61 @@ def _day_note(steps, level, now, t0, r, last_awake, profile):
     if profile.valid_days < 14:
         return "校准中"
     return None
+
+
+LINE_MAX = 16
+BEDTIME_SOON_H = 2
+PAST_BEDTIME_H = 4
+
+
+def _fit(*parts):
+    """用 " · " 连接；超过 16 字时从末尾丢弃次要部分。"""
+    parts = [x for x in parts if x]
+    while len(parts) > 1 and len(" · ".join(parts)) > LINE_MAX:
+        parts.pop()
+    return " · ".join(parts)[:LINE_MAX]
+
+
+def _rate_text(rate):
+    return "%+d%%/h" % round_level(rate)
+
+
+def _hours_text(h):
+    return ("%.1f" % h if h < 3 else "%d" % round_level(h)) + "h"
+
+
+def day_line(steps, level, note, now, profile, p, tz, sleep_s=None, stress_s=None):
+    """按时机挑数值：起床看准备度与睡眠，运动/压力看心率与 Oura 压力分钟，消耗中看预计值。"""
+    if note and note.endswith("h未同步"):
+        return note
+    if note and note.startswith("准备度"):
+        return _fit(note, "睡%.1fh" % (sleep_s / 3600) if sleep_s else None)
+    last = steps[-3:]
+    rate = _mean([s.rate for s in last]) if last else 0.0
+    hr = next((s.hr for s in reversed(last) if s.hr is not None), None)
+    hr_text = "心率%d" % round_level(hr) if hr is not None else None
+    if note == "运动中":
+        return _fit(hr_text, "运动中")
+    if note == "生理压力高":
+        return _fit(hr_text, "压力%d分" % round_level(stress_s / 60) if stress_s else "压力高", "深呼吸")
+    if note in ("小憩回血", "静息恢复") or rate >= p["trend_band"]:
+        return _fit(_rate_text(rate), "回血中")
+    if level < 20:
+        return _fit(_rate_text(rate), "该休息了")
+    local = datetime.fromtimestamp(now, tz)
+    to_bed_h = ((profile.bed_min - (local.hour * 60 + local.minute)) % 1440) / 60
+    if to_bed_h > 24 - PAST_BEDTIME_H:
+        return _fit(_rate_text(rate), "该睡了")
+    if level < 45:
+        advice = "宜早睡" if to_bed_h <= BEDTIME_SOON_H else "宜小憩" if local.hour < 18 else "宜放松"
+    else:
+        advice = "适合轻任务" if level < 65 else "适合专注"
+    if rate < 0:
+        t20 = (level - 20) / -rate
+        if 0 < t20 < to_bed_h:
+            return _fit("约%s后到20%%" % _hours_text(t20), advice)
+        return _fit("睡前约%d%%" % max(0, round_level(level + rate * to_bed_h)), advice)
+    return _fit(_rate_text(rate), advice)
 
 
 def _anchor_state(anchor_day, anchor_date, m, main, data, hr_quiet, p, tz, age):
@@ -593,7 +649,12 @@ def compute(now, data, hr_quiet, p, tz, age=None):
         level = round_level(hp)
         trend = trend_of([s.rate for s in steps], p)
         note = _day_note(steps, level, now, t0, r, last_awake, profile)
-        return Result(level, status_word(level), trend, note, "day", steps, anchor_day, r, profile)
+        stress = next((row.get("stress_high") for row in data.get("daily_stress") or []
+                       if isinstance(row, dict) and row.get("day") == today.isoformat()), None)
+        line = day_line(steps, level, note, now, profile, p, tz,
+                        sleep_s=m.get("total_sleep_duration"),
+                        stress_s=stress if isinstance(stress, (int, float)) else None)
+        return Result(level, status_word(level), trend, note, "day", steps, anchor_day, r, profile, line)
 
     cells = build_cells(t0, ns.t_bed, heartrate, activities, workouts, naps, tz)
     steps = replay(hp0, cells, profile, p, horizon)
