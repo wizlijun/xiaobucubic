@@ -74,6 +74,12 @@ class OuraAuthTests(unittest.TestCase):
         self.assertEqual(out['expires_at'], NOW + 3600)
         self.assertEqual(read_token(self.path)['refresh_token'], 'r1')
 
+    def test_missing_expires_in_defaults_to_3600(self):
+        resp = {'access_token': 'a1', 'refresh_token': 'r1'}
+        with mock.patch.object(oura_auth, 'post_form', return_value=resp):
+            out = oura_auth.exchange_code(CFG, 'code', 'ver', now=NOW, path=self.path)
+        self.assertEqual(out['expires_at'], NOW + 3600)
+
     def test_valid_token_no_refresh(self):
         write_token(self.path, expires_at=NOW + 301)
         with mock.patch.object(oura_auth, 'post_form') as pf:

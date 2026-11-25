@@ -132,7 +132,7 @@ def _store(path, resp, old, now):
         raise RuntimeError('Oura token response missing access_token')
     new = {'access_token': resp['access_token'],
            'refresh_token': resp.get('refresh_token') or old.get('refresh_token'),
-           'expires_at': int(now + int(resp.get('expires_in') or 0)),
+           'expires_at': int(now + int(resp.get('expires_in') or 3600)),
            'scope': resp.get('scope') or old.get('scope', SCOPE)}
     _save(path, new)
     return new

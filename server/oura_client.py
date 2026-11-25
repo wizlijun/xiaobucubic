@@ -12,6 +12,7 @@ import oura_auth
 
 API = "https://api.ouraring.com/v2/usercollection/"
 TIMEOUT = 20
+MAX_PAGES = 200
 
 
 class RateLimited(RuntimeError):
@@ -60,7 +61,7 @@ def _fetch(name, url, token):
 def get(collection, token=oura_auth.access_token, **params):
     rows = []
     params = dict(params)
-    while True:
+    for _ in range(MAX_PAGES):
         url = API + collection
         if params:
             url += "?" + urllib.parse.urlencode(params)
@@ -70,6 +71,7 @@ def get(collection, token=oura_auth.access_token, **params):
         if not nxt:
             return rows
         params["next_token"] = nxt
+    raise RuntimeError("Oura %s: more than %d pages" % (collection, MAX_PAGES))
 
 
 def personal_info(token=oura_auth.access_token):
@@ -81,7 +83,7 @@ def _midnight(day, tz):
 
 
 def _by_day(rows, lo, hi):
-    return [r for r in rows if lo.isoformat() <= r.get("day", "") <= hi.isoformat()]
+    return [r for r in rows if lo.isoformat() <= (r.get("day") or "") <= hi.isoformat()]
 
 
 def _daily(name, lo, hi, token):

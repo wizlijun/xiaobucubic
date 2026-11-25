@@ -79,7 +79,13 @@ def cached_hr_quiet(day, fetch, path=None):
     cached = _read_cache(path)
     if cached and cached["day"] == day.isoformat():
         return cached["hr_quiet"]
-    hr_quiet, valid_days = fetch(day)
+    try:
+        hr_quiet, valid_days = fetch(day)
+    except oura_auth.AuthRequired:
+        raise
+    except Exception as exc:  # 基线取不到：沿用旧缓存，不改写
+        log("基线获取失败 (%s): %s" % (type(exc).__name__, exc))
+        return cached["hr_quiet"] if cached else None
     if hr_quiet is None:  # 暂时拿不到基线：不缓存，下一轮重试
         return None
     try:
@@ -153,7 +159,7 @@ def follow(args, cycle_fn, push_fn, sleep=time.sleep, clock=time.time, max_cycle
             if item is not None:
                 push_fn(item)
         except Exception as exc:  # 单轮出错只记日志
-            log("本轮出错: %s" % exc)
+            log("本轮出错: %s: %s" % (type(exc).__name__, exc))
         n += 1
         if max_cycles is not None and n >= max_cycles:
             return
@@ -184,7 +190,9 @@ def _num(v, fmt="%.0f"):
 def _report_data(now, tz, today, n):
     one = timedelta(days=1)
     lo, hi = (today - (n + 1) * one).isoformat(), (today + one).isoformat()
-    data = {name: oura_client.get(name, start_date=lo, end_date=hi)
+    lo_long = (today - (n + 29) * one).isoformat()  # 每个报告日都要有完整的 28 天画像
+    data = {name: oura_client.get(name, start_date=lo_long if name in ("sleep", "daily_readiness") else lo,
+                                  end_date=hi)
             for name in ("sleep", "daily_readiness", "daily_activity", "workout")}
     start = datetime(today.year, today.month, today.day, tzinfo=tz) - (n + 1) * one
     data["heartrate"] = oura_client.get("heartrate", start_datetime=start.isoformat(),

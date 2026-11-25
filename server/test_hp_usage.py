@@ -187,6 +187,64 @@ class BaselineRetryTests(unittest.TestCase):
             self.assertEqual(len(calls), 2)
 
 
+class BaselineFailureTests(unittest.TestCase):
+    def test_fetch_error_returns_stale_cache(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = d + "/c.json"
+            hp_usage._write_cache(path, {"day": "2026-11-24", "hr_quiet": 57.0, "valid_days": 20})
+            with open(path) as f:
+                before = f.read()
+
+            def fetch(day):
+                raise RuntimeError("boom")
+            logged = []
+            with patch.object(hp_usage, "log", side_effect=logged.append):
+                self.assertEqual(hp_usage.cached_hr_quiet(date(2026, 11, 25), fetch, path), 57.0)
+            self.assertEqual(len(logged), 1)
+            with open(path) as f:
+                self.assertEqual(f.read(), before)
+
+    def test_fetch_error_without_cache_is_none(self):
+        with tempfile.TemporaryDirectory() as d:
+            def fetch(day):
+                raise OSError("down")
+            self.assertIsNone(hp_usage.cached_hr_quiet(date(2026, 11, 25), fetch, d + "/c.json"))
+            self.assertEqual(os.listdir(d), [])
+
+    def test_auth_required_still_propagates(self):
+        def fetch(day):
+            raise oura_auth.AuthRequired("x")
+        with tempfile.TemporaryDirectory() as d:
+            with self.assertRaises(oura_auth.AuthRequired):
+                hp_usage.cached_hr_quiet(date(2026, 11, 25), fetch, d + "/c.json")
+
+
+class ReportWindowTests(unittest.TestCase):
+    def test_sleep_and_readiness_start_early(self):
+        calls = {}
+
+        def get(name, *a, **kw):
+            calls[name] = kw
+            return []
+        today = date(2026, 11, 27)
+        tz = timezone(timedelta(hours=8))
+        with patch.object(oura_client, "get", side_effect=get), \
+             patch.object(oura_client, "personal_info", return_value={}):
+            hp_usage._report_data(hp_model.parse_ts("2026-11-27T10:00:00+08:00"), tz, today, 2)
+        self.assertEqual(calls["sleep"]["start_date"], "2026-10-27")
+        self.assertEqual(calls["daily_readiness"]["start_date"], "2026-10-27")
+        self.assertEqual(calls["daily_activity"]["start_date"], "2026-11-24")
+        self.assertEqual(calls["workout"]["start_date"], "2026-11-24")
+        self.assertEqual(calls["sleep"]["end_date"], "2026-11-28")
+
+    def test_follow_log_has_exception_type(self):
+        logged = []
+        with patch.object(hp_usage, "log", side_effect=logged.append):
+            hp_usage.follow(args(), lambda t: (_ for _ in ()).throw(KeyError("k")), lambda i: None,
+                            sleep=lambda s: None, clock=lambda: 1000.0, max_cycles=1)
+        self.assertTrue(any("KeyError" in m for m in logged), logged)
+
+
 class RealAuthChainTests(unittest.TestCase):
     def run_cycle(self, content):
         with tempfile.TemporaryDirectory() as d:

@@ -63,6 +63,19 @@ def q(req):
     return parse_qs(urlsplit(req.full_url).query)
 
 
+class FixWaveClientTests(unittest.TestCase):
+    def test_page_cap(self):
+        endless = [{"data": [], "next_token": "x"}] * 250
+        with self.assertRaises(RuntimeError) as cm:
+            run(endless, oura_client.get, "sleep", token=Tok())
+        self.assertIn("sleep", str(cm.exception))
+
+    def test_by_day_tolerates_missing_day(self):
+        rows = [{"day": None}, {}, {"day": "2026-11-25"}]
+        self.assertEqual(oura_client._by_day(rows, date(2026, 11, 25), date(2026, 11, 25)),
+                         [{"day": "2026-11-25"}])
+
+
 class GetTest(unittest.TestCase):
     def test_pagination(self):
         out, reqs = run([{"data": [{"a": 1}], "next_token": "abc"},

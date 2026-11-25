@@ -35,10 +35,24 @@ def local_date(ts, tz):
     return datetime.fromtimestamp(ts, tz).date()
 
 
+def _safe_ts(value):
+    """parse_ts, or None for a missing / malformed timestamp."""
+    try:
+        return parse_ts(value)
+    except (AttributeError, TypeError, ValueError):
+        return None
+
+
+def _sleep_ok(s):
+    return (isinstance(s, dict) and isinstance(s.get("day"), str)
+            and _safe_ts(s.get("bedtime_start")) is not None
+            and _safe_ts(s.get("bedtime_end")) is not None)
+
+
 def main_sleeps(sleeps):
     best = {}
     for s in sleeps:
-        if s.get("type") != "long_sleep":
+        if not _sleep_ok(s) or s.get("type") != "long_sleep":
             continue
         cur = best.get(s["day"])
         if cur is None or (s.get("total_sleep_duration") or 0) > (cur.get("total_sleep_duration") or 0):
@@ -49,7 +63,7 @@ def main_sleeps(sleeps):
 def nap_periods(sleeps, main_by_day, t0, now):
     out = []
     for s in sleeps:
-        if s.get("type") not in NAP_TYPES:
+        if not _sleep_ok(s) or s.get("type") not in NAP_TYPES:
             continue
         if s["type"] == "long_sleep" and main_by_day.get(s.get("day")) is s:
             continue
@@ -136,7 +150,7 @@ def build_profile(day, main_by_day, readiness_by_day, hr_quiet, age, sex, p, tz)
 
     rhr, rhr_mad = _med_mad([m["lowest_heart_rate"] for m in mains if m.get("lowest_heart_rate") is not None])
     ln_med, ln_mad = _med_mad([math.log(m["average_hrv"]) for m in mains if m.get("average_hrv")])
-    hq = hr_quiet if n >= 14 else (1.25 * rhr if rhr is not None else None)
+    hq = hr_quiet if n >= 14 and hr_quiet is not None else (1.25 * rhr if rhr is not None else None)
 
     bed_min, wake_min, habitual_h, need_min = 1410, 450, 7.5, 480
     totals = [m["total_sleep_duration"] for m in mains if m.get("total_sleep_duration") is not None]
@@ -214,8 +228,22 @@ def _mean(vals):
 
 
 def _hr_time(row):
-    ms = row.get("timestamp_unix")
-    return int(ms) // 1000 if ms is not None else parse_ts(row["timestamp"])
+    ts = row.get("timestamp_unix")
+    if ts is None:
+        return parse_ts(row["timestamp"])
+    ts = int(ts)
+    return ts // 1000 if ts > 10 ** 11 else ts
+
+
+def _clean_hr(rows):
+    out = []
+    for row in rows:
+        try:
+            _hr_time(row)
+        except (AttributeError, KeyError, TypeError, ValueError):
+            continue
+        out.append(row)
+    return out
 
 
 def build_cells(t0, t_end, heartrate, activities, workouts, naps, tz):
@@ -272,9 +300,11 @@ def build_cells(t0, t_end, heartrate, activities, workouts, naps, tz):
         c.met = _mean(met_vals[c.start])
 
     for w in workouts:
-        ws, we = parse_ts(w["start_datetime"]), parse_ts(w["end_datetime"])
+        if not isinstance(w, dict):
+            continue
+        ws, we = _safe_ts(w.get("start_datetime")), _safe_ts(w.get("end_datetime"))
         m = INTENSITY_MET.get(w.get("intensity"))
-        if m is None:
+        if m is None or ws is None or we is None:
             continue
         for c in cells:
             if ws < c.start + CELL and we > c.start:
@@ -367,6 +397,7 @@ def replay(hp0, cells, profile, p, horizon, anchor=None):
 
 AWAKE_SOURCES = ("awake", "workout", "live", "rest", "session")
 NIGHT_GAP = 1800
+DOZE_MAX = 3 * 3600
 WOKE_HOLD = 7200
 
 
@@ -401,14 +432,28 @@ def night_state(t0, now, heartrate, profile, tz):
     sleeps.sort()
     awakes.sort()
 
+    segs = []  # (first, last) of each run of >= 2 sleep rows with gaps <= NIGHT_GAP
+    first = last = None
+    n_rows = 0
+    for t in sleeps + [None]:
+        if t is not None and last is not None and t - last <= NIGHT_GAP:
+            last, n_rows = t, n_rows + 1
+            continue
+        if n_rows >= 2:
+            segs.append((first, last))
+        first, last, n_rows = t, t, 1
+
+    def confirmed_wake_after(end):
+        return any(a > end and now >= a + NIGHT_GAP
+                   and not any(a < s <= a + NIGHT_GAP for s in sleeps) for a in awakes)
+
     t_bed = None
-    seg_start = None
-    for i, t in enumerate(sleeps):
-        if i and t - sleeps[i - 1] <= NIGHT_GAP:
-            t_bed = seg_start
-            break
-        seg_start = t
-    if t_bed is None:
+    for first, last in segs:
+        if last - first < DOZE_MAX and confirmed_wake_after(last):
+            continue  # evening doze: a later segment is the real night
+        t_bed = first
+        break
+    if t_bed is None and not segs:
         midnight = datetime(day.year, day.month, day.day, tzinfo=tz)
         habitual = midnight + timedelta(minutes=profile.bed_min)
         while habitual.timestamp() < floor:
@@ -501,7 +546,8 @@ def _day_note(steps, level, now, t0, r, last_awake, profile):
 
 def _anchor_state(anchor_day, anchor_date, m, main, data, hr_quiet, p, tz, age):
     t0 = parse_ts(m["bedtime_end"])
-    readiness_by_day = {r["day"]: r for r in data.get("daily_readiness") or []}
+    readiness_by_day = {r["day"]: r for r in data.get("daily_readiness") or []
+                        if isinstance(r, dict) and isinstance(r.get("day"), str)}
     info = data.get("personal_info") or {}
     age = info.get("age") if info.get("age") is not None else age
     profile = build_profile(anchor_date, main, readiness_by_day, hr_quiet, age,
@@ -525,7 +571,7 @@ def compute(now, data, hr_quiet, p, tz, age=None):
 
     m = main[anchor_day]
     t0, profile, hp0, r = _anchor_state(anchor_day, anchor_date, m, main, data, hr_quiet, p, tz, age)
-    heartrate = [row for row in data.get("heartrate") or [] if _hr_time(row) <= now]
+    heartrate = [row for row in _clean_hr(data.get("heartrate") or []) if _hr_time(row) <= now]
     activities = data.get("daily_activity") or []
     workouts = data.get("workout") or []
     naps = nap_periods(sleeps, main, t0, now)
@@ -580,13 +626,13 @@ def day_summary(day, data, hr_quiet, p, tz, age=None):
     else:
         nd = anchor_date + timedelta(days=1)
         t_end = int(datetime(nd.year, nd.month, nd.day, 4, tzinfo=tz).timestamp())
-    heartrate = data.get("heartrate") or []
+    heartrate = _clean_hr(data.get("heartrate") or [])
     activities = data.get("daily_activity") or []
     cells = build_cells(t0, t_end, heartrate, activities, data.get("workout") or [],
                         nap_periods(sleeps, main, t0, t_end), tz)
     steps = replay(hp0, cells, profile, p, data_horizon(heartrate, activities))
     n = len(steps)
-    loads = [s.load for s in steps if s.kind not in ("nap", "unobserved")]
+    loads = [s.load for s in steps if s.kind not in ("nap", "unobserved", "offwrist")]
     return {
         "day": day, "anchor": round(hp0, 1),
         "anchor_source": "readiness" if r is not None else "sleep",

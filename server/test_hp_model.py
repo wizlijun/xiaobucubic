@@ -747,5 +747,93 @@ class DaySummaryTests(unittest.TestCase):
         self.assertTrue(stress_in_minutes([45, 60, 30]))
 
 
+class FixWaveTests(unittest.TestCase):
+    NS = NightTests
+
+    def doze_data(self):
+        d = date(2026, 11, 25)
+        main = sleep("2026-11-25", "2026-11-24T23:30:00+08:00", "2026-11-25T07:30:00+08:00", 8 * 3600,
+                     lowest_heart_rate=48)
+        sleeps = [main] + list(days_before(d, 16, lowest_heart_rate=48).values())
+        hr = (hr_run("2026-11-25T07:30:00+08:00", "2026-11-25T19:00:00+08:00", "awake")
+              + hr_run("2026-11-25T19:05:00+08:00", "2026-11-25T19:45:00+08:00", "sleep")
+              + hr_run("2026-11-25T19:55:00+08:00", "2026-11-25T23:20:00+08:00", "awake")
+              + hr_run("2026-11-25T23:40:00+08:00", "2026-11-26T00:30:00+08:00", "sleep"))
+        return {"sleep": sleeps, "daily_readiness": [{"day": "2026-11-25", "score": 80}],
+                "daily_activity": [], "workout": [], "heartrate": hr}
+
+    def test_evening_doze_is_skipped(self):
+        data = self.doze_data()
+        for now in ("2026-11-25T20:30:00+08:00", "2026-11-25T22:30:00+08:00"):
+            r = compute(parse_ts(now), data, 62, P, TZ)
+            self.assertEqual(r.state, "day", now)
+        now = parse_ts("2026-11-25T23:59:00+08:00")
+        self.assertEqual(compute(now, data, 62, P, TZ).state, "night")
+        prof = Profile(28, 50, 2, 62, 4, 0.2, 1410, 450, 8, 480, 70, 190, 0.64, 1.92)
+        ns = night_state(parse_ts("2026-11-25T07:30:00+08:00"), now, data["heartrate"], prof, TZ)
+        self.assertEqual((ns.state, ns.t_bed, ns.t_wake),
+                         ("night", parse_ts("2026-11-25T23:40:00+08:00"), None))
+
+    def test_long_segment_then_wake_is_not_doze(self):
+        rows = (NightTests.run_rows("25 20:00", "25 23:00", "sleep")  # span exactly 3h
+                + [NightTests.hr("25 23:10", "awake"), NightTests.hr("25 23:20", "awake")])
+        prof = Profile(28, 50, 2, 62, 4, 0.2, 1410, 450, 8, 480, 70, 190, 0.64, 1.92)
+        r = night_state(NightTests.T0, NightTests.at("25 23:50"), rows, prof, TZ)
+        self.assertEqual((r.state, r.t_bed, r.t_wake),
+                         ("woke", NightTests.at("25 20:00"), NightTests.at("25 23:10")))
+
+    def test_doze_without_confirmed_wake_is_night(self):
+        rows = NightTests.run_rows("25 19:05", "25 19:45", "sleep") + [NightTests.hr("25 19:55", "awake")]
+        prof = Profile(28, 50, 2, 62, 4, 0.2, 1410, 450, 8, 480, 70, 190, 0.64, 1.92)
+        r = night_state(NightTests.T0, NightTests.at("25 20:10"), rows, prof, TZ)
+        self.assertEqual((r.state, r.t_bed), ("night", NightTests.at("25 19:05")))
+
+    def test_profile_hr_quiet_none_falls_back(self):
+        d = date(2026, 11, 25)
+        mains = days_before(d, 16, lowest_heart_rate=48)
+        prof = build_profile(d, mains, {}, None, 40, "male", P, TZ)
+        self.assertEqual(prof.hr_quiet, 1.25 * 48)
+        self.assertEqual(build_profile(d, mains, {}, 55.0, 40, "male", P, TZ).hr_quiet, 55.0)
+
+    def test_timestamp_unix_seconds_and_ms(self):
+        from hp_model import _hr_time
+        t = parse_ts("2026-11-25T10:00:00+08:00")
+        self.assertEqual(_hr_time({"timestamp_unix": t}), t)
+        self.assertEqual(_hr_time({"timestamp_unix": t * 1000}), t)
+        data = example_day_data(until="2026-11-25T15:30:00+08:00")
+        base = compute(parse_ts("2026-11-25T15:30:00+08:00"), data, 62, P, TZ)
+        for r in data["heartrate"]:
+            r["timestamp_unix"] = parse_ts(r["timestamp"])
+        again = compute(parse_ts("2026-11-25T15:30:00+08:00"), data, 62, P, TZ)
+        self.assertEqual((again.level, again.state), (base.level, base.state))
+
+    def test_junk_records_do_not_abort(self):
+        data = example_day_data(until="2026-11-25T15:30:00+08:00")
+        now = parse_ts("2026-11-25T15:30:00+08:00")
+        base = compute(now, data, 62, P, TZ)
+        data["sleep"] += [{}, {"type": "long_sleep", "day": None},
+                          {"type": "long_sleep", "day": "2026-11-20", "bedtime_end": None},
+                          {"type": "sleep", "day": "2026-11-25", "bedtime_start": None,
+                           "bedtime_end": "x", "total_sleep_duration": 3600}, "junk"]
+        data["daily_readiness"] += [{"score": 50}, {"day": None, "score": 1}]
+        data["workout"] += [{}, {"start_datetime": None, "end_datetime": None, "intensity": "easy"},
+                            {"intensity": "hard"}]
+        data["heartrate"] += [{"bpm": 60}, {"timestamp": None, "bpm": 60, "source": "awake"},
+                              {"timestamp": "garbage", "bpm": 60, "source": "awake"}, {}]
+        r = compute(now, data, 62, P, TZ)
+        self.assertEqual((r.level, r.state), (base.level, base.state))
+        self.assertIsNotNone(day_summary("2026-11-25", data, 62, P, TZ))
+
+    def test_mean_load_excludes_offwrist(self):
+        main = sleep("2026-11-25", "2026-11-24T23:00:00+08:00", "2026-11-25T07:00:00+08:00", 8 * 3600,
+                     lowest_heart_rate=48)
+        data = {"sleep": [main], "daily_readiness": [{"day": "2026-11-25", "score": 80}],
+                "daily_activity": [{"timestamp": "2026-11-25T04:00:00+08:00", "class_5_min": "0" * 288}],
+                "workout": [], "heartrate": []}
+        s = day_summary("2026-11-25", data, 62, P, TZ)
+        self.assertIsNone(s["mean_load"])
+        self.assertLess(s["bed_hp"], s["anchor"])  # cells were replayed as offwrist
+
+
 if __name__ == "__main__":
     unittest.main()
