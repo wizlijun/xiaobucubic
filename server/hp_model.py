@@ -175,3 +175,189 @@ def anchor_value(day, main, readiness_by_day, profile, p):
     z_hrv = _z(math.log(hrv) if hrv else None, profile.ln_hrv_med, profile.ln_hrv_mad)
     z_rhr = _z(main.get("lowest_heart_rate"), profile.rhr, profile.rhr_mad)
     return _clamp(100 * d ** 0.8 + 8 * z_hrv - 8 * z_rhr, 20, 100), None
+
+
+STILL_SOURCES = ("awake", "rest", "live", "session")
+INTENSITY_MET = {"easy": 3.0, "moderate": 5.0, "hard": 8.0}
+CELL = 300
+CARRY_CELLS = 6
+
+
+@dataclass
+class Cell:
+    start: int
+    hr: float | None = None
+    still_hr: float | None = None
+    workout_hr: bool = False
+    met: float | None = None
+    cls: str | None = None
+    workout_met: float | None = None
+    nap: bool = False
+    nap_end_hours: float | None = None
+
+
+@dataclass
+class Step:
+    start: int
+    kind: str
+    rate: float
+    hp: float
+    hr: float | None
+    met: float | None
+    load: float
+
+
+def _mean(vals):
+    return sum(vals) / len(vals) if vals else None
+
+
+def _hr_time(row):
+    ms = row.get("timestamp_unix")
+    return int(ms) // 1000 if ms is not None else parse_ts(row["timestamp"])
+
+
+def build_cells(t0, t_end, heartrate, activities, workouts, naps, tz):
+    first = -(-t0 // CELL) * CELL
+    starts = []
+    s = first
+    while s + CELL <= t_end:
+        starts.append(s)
+        s += CELL
+    idx = {s: i for i, s in enumerate(starts)}
+    cells = [Cell(s) for s in starts]
+    if not cells:
+        return cells
+
+    hr_all = {s: [] for s in starts}
+    hr_still = {s: [] for s in starts}
+    for row in heartrate:
+        bpm = row.get("bpm")
+        if bpm is None or row.get("source") == "sleep":
+            continue
+        t = _hr_time(row)
+        s = t - t % CELL
+        if s not in idx:
+            continue
+        hr_all[s].append(bpm)
+        if row.get("source") in STILL_SOURCES:
+            hr_still[s].append(bpm)
+        if row.get("source") == "workout":
+            cells[idx[s]].workout_hr = True
+
+    met_vals = {s: [] for s in starts}
+    for act in activities:
+        met = act.get("met") or {}
+        if met.get("items") and met.get("timestamp"):
+            base, step = parse_ts(met["timestamp"]), met.get("interval") or 60
+            for k, v in enumerate(met["items"]):
+                if v is None:
+                    continue
+                t = base + k * step
+                s = t - t % CELL
+                if s in idx:
+                    met_vals[s].append(v)
+        cls = act.get("class_5_min")
+        if cls:
+            base = parse_ts(act["timestamp"])
+            for k, ch in enumerate(cls):
+                s = base + CELL * k
+                if s in idx:
+                    cells[idx[s]].cls = ch
+
+    for c in cells:
+        c.hr = _mean(hr_all[c.start])
+        c.still_hr = _mean(hr_still[c.start])
+        c.met = _mean(met_vals[c.start])
+
+    for w in workouts:
+        ws, we = parse_ts(w["start_datetime"]), parse_ts(w["end_datetime"])
+        m = INTENSITY_MET.get(w.get("intensity"))
+        if m is None:
+            continue
+        for c in cells:
+            if ws < c.start + CELL and we > c.start:
+                c.workout_met = m if c.workout_met is None else max(c.workout_met, m)
+
+    for start, end, total in naps:
+        for c in cells:
+            if start < c.start + CELL and end > c.start:
+                c.nap = True
+        last = idx.get((end - 1) - (end - 1) % CELL)
+        if last is not None and cells[last].nap:
+            cells[last].nap_end_hours = total / 3600
+    return cells
+
+
+def data_horizon(heartrate, activities):
+    times = [_hr_time(r) for r in heartrate if r.get("bpm") is not None]
+    for act in activities:
+        met = act.get("met") or {}
+        if met.get("items") and met.get("timestamp"):
+            base, step = parse_ts(met["timestamp"]), met.get("interval") or 60
+            times += [base + k * step for k, v in enumerate(met["items"]) if v is not None]
+    return max(times) if times else None
+
+
+def _trimp_load(hr, profile, p):
+    x = _clamp((hr - profile.rhr) / (profile.hrmax - profile.rhr), 0, 1)
+    return p["k_act"] * 60 * x * profile.trimp_a * math.exp(profile.trimp_b * x)
+
+
+def replay(hp0, cells, profile, p, horizon, anchor=None):
+    hp = float(hp0)
+    target = hp0 if anchor is None else anchor
+    kappa, basal = p["kappa"], p["basal"] * p["kappa"]
+    steps = []
+    carry, carry_idx = None, -10 ** 9
+    for i, c in enumerate(cells):
+        load = 0.0
+        if c.nap:
+            kind, rate = "nap", 0.0
+            carry = None
+            if c.nap_end_hours is not None:
+                hp += max(0.0, target - hp) * (1 - math.exp(-c.nap_end_hours / p["tau_sleep"]))
+        elif horizon is not None and c.start > horizon:
+            kind, load = "unobserved", p["exp_load"]
+            rate = -(basal + load)
+        else:
+            met = c.met
+            moving = (c.workout_met is not None or c.workout_hr
+                      or (met is not None and met >= 2.0))
+            rate = None
+            if moving:
+                if (c.hr is not None and profile.hrmax is not None
+                        and profile.rhr is not None and profile.hrmax > profile.rhr):
+                    load = kappa * _trimp_load(c.hr, profile, p)
+                elif met is not None:
+                    load = kappa * p["k_met"] * max(0.0, met - 1.5)
+                elif c.workout_met is not None:
+                    load = kappa * p["k_met"] * max(0.0, c.workout_met - 1.5)
+                else:
+                    moving = False
+                if moving:
+                    kind, rate = "exercise", -(basal + load)
+                    carry = None
+            if rate is None:
+                if c.cls == "0":
+                    kind, load = "offwrist", p["exp_load"]
+                    rate = -(basal + load)
+                else:
+                    if c.still_hr is not None:
+                        carry, carry_idx = c.still_hr, i
+                    hr = carry if i - carry_idx <= CARRY_CELLS else None
+                    if hr is None or profile.hr_quiet is None:
+                        kind, load = "unobserved", p["exp_load"]
+                        rate = -(basal + load)
+                    else:
+                        e = (hr - profile.hr_quiet) / profile.hr_quiet
+                        if e <= p["theta_rest"]:
+                            kind, rate = "rest", -basal + p["rest_gain"]
+                        else:
+                            load = kappa * min(p["stress_cap"],
+                                               p["k_stress"] * max(0.0, e - p["theta_stress"]))
+                            kind = "stress" if load > 0 else "still"
+                            rate = -(basal + load)
+        hp = _clamp(hp + rate * CELL / 3600, 0, 100)
+        step_hr = c.hr if c.hr is not None else c.still_hr
+        steps.append(Step(c.start, kind, rate, hp, step_hr, c.met, load))
+    return steps
