@@ -53,7 +53,7 @@ def load_config(env_file=ENV_FILE):
     def pick(name):
         return os.environ.get(name) or values.get(name, '')
     return {'client_id': pick('OURA_CLIENT_ID'), 'client_secret': pick('OURA_CLIENT_SECRET'),
-            'redirect_uri': pick('OURA_REDIRECT_URI') or 'http://127.0.0.1:8765/callback'}
+            'redirect_uri': pick('OURA_REDIRECT_URI') or 'http://localhost:8765/callback'}
 
 
 def _b64(raw):

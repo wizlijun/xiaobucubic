@@ -12,7 +12,7 @@ from urllib.parse import urlparse, parse_qs
 
 import oura_auth
 
-CFG = {'client_id': 'cid', 'client_secret': 'sec', 'redirect_uri': 'http://127.0.0.1:8765/callback'}
+CFG = {'client_id': 'cid', 'client_secret': 'sec', 'redirect_uri': 'http://localhost:8765/callback'}
 NOW = 1_000_000
 
 

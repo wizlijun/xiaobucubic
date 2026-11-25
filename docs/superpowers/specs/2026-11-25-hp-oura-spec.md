@@ -35,7 +35,7 @@
 | `oura_client.py` | Oura v2 取数：分页、日期余量、429 处理 | 网络 |
 | `hp_model.py` | 纯函数：基线、锚点、5 分钟网格、重放、夜间预估、trend、status、note | 无 |
 | `hp_usage.py` | CLI 与常驻循环：取数 → 模型 → 生成 payload → 推送 | 有 |
-| `oura.env.example` | `OURA_CLIENT_ID=`、`OURA_CLIENT_SECRET=`、`OURA_REDIRECT_URI=http://127.0.0.1:8765/callback` 模板 | — |
+| `oura.env.example` | `OURA_CLIENT_ID=`、`OURA_CLIENT_SECRET=`、`OURA_REDIRECT_URI=http://localhost:8765/callback` 模板 | — |
 | `test_hp_model.py`、`test_oura_client.py`、`test_oura_auth.py`、`test_hp_usage.py` | 单元测试，`python3 -m unittest` | — |
 
 本地文件（权限 0600，不进版本库）：
@@ -51,7 +51,7 @@
 
 - `python3 oura_auth.py login`：
   1. 生成 `state` 和 PKCE `S256` challenge，打印授权 URL：`https://cloud.ouraring.com/oauth/authorize?response_type=code&client_id=…&redirect_uri=…&scope=personal daily heartrate workout&state=…&code_challenge=…&code_challenge_method=S256`。
-  2. 在 `127.0.0.1:8765` 上临时监听 `/callback`，校验 `state`。
+  2. 在 `localhost:8765`（绑定 127.0.0.1）上临时监听 `/callback`，校验 `state`。
   3. 拿到 code 后 POST `https://api.ouraring.com/oauth/token`（form-urlencoded，带 `code_verifier`）。
   4. 收到令牌后写入 `oura_token.json`：`{access_token, refresh_token, expires_at, scope}`。其中 `expires_at = now + expires_in`。
 - **刷新**：在 `expires_at - 300 <= now` 或请求返回 401 时触发。
@@ -268,7 +268,7 @@ null 时的 payload：`{"name": "HP", "level_percent": null, "status": "待同�
 
 ## 9. 已定决策（2026-11-25 确认）
 
-- **Q1 Oura 授权与运行机器**：原来的 `getouraring.py`、令牌和 `~/myhealthdata` 都不在这台 Mac 上。**决定**：HP 进程跑在这台 Mac（显示服务所在机器），重新走 OAuth。用户需要在 cloud.ouraring.com 的 OAuth 应用里登记回调地址 `http://127.0.0.1:8765/callback`，并把 client id 和 secret 填进 `server/oura.env`。拿到凭据之前，实现和全部离线测试照常进行，只有第 8 节的「数据核实」要等授权。
+- **Q1 Oura 授权与运行机器**：原来的 `getouraring.py`、令牌和 `~/myhealthdata` 都不在这台 Mac 上。**决定**：HP 进程跑在这台 Mac（显示服务所在机器），重新走 OAuth。用户需要在 cloud.ouraring.com 的 OAuth 应用里登记回调地址 `http://localhost:8765/callback`，并把 client id 和 secret 填进 `server/oura.env`。拿到凭据之前，实现和全部离线测试照常进行，只有第 8 节的「数据核实」要等授权。
 - **Q2 早晨还没打开 Oura App 时显示什么**：睡眠和准备度只在打开 App 时同步，后台只同步心率和活动。**决定**：与原设计一致，习惯起床时刻 + 2h 之后仍没有当天主睡眠，就显示 null「待同步」，不先用常态锚点推进。用心率判断出醒来时刻后，规则改为「醒来 2h 后变 null」，醒来后的 2 小时内显示冻结的睡眠预估（见 4.5）。
 - **Q3 手动打卡的入口**：服务端 energy 只有一个槽位，手机端的 `PUT` 会在 10 分钟内被 HP 进程覆盖。HP 进程也不能靠 `GET /v1/display` 回读打卡，因为写 token 读 display 会调用 `scheduler.on_request()`，让 AI 采集器一直认为有终端在看。**决定**：**不做打卡**，完全无感。
   - HP 全部来自 Oura 数据，用户不需要任何输入。HP 也从不主动提醒，没有通知、消息或推送，只在已有卡片上更新数字和文案。
