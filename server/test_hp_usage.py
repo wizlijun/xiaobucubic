@@ -4,7 +4,7 @@ import tempfile
 import threading
 import unittest
 import urllib.request
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -15,6 +15,7 @@ import hp_model
 import hp_usage
 import oura_auth
 import oura_client
+import test_hp_model
 
 
 _log_patch = patch.object(hp_usage, "log")
@@ -256,12 +257,82 @@ class FollowTests(unittest.TestCase):
             hp_usage.follow(args(), boom, lambda i: None, sleep=lambda s: None, clock=lambda: 1, max_cycles=2)
 
 
-class CliTests(unittest.TestCase):
-    def test_report_stub(self):
-        with self.assertRaises(SystemExit) as cm:
-            hp_usage.main(["--report"])
-        self.assertIn("not implemented", str(cm.exception))
+class ReportTests(unittest.TestCase):
+    TZ = timezone(timedelta(hours=8))
+    NOW = hp_model.parse_ts("2026-11-27T10:00:00+08:00")
 
+    def data(self):
+        d = test_hp_model.example_day_data()
+        d["sleep"] = d["sleep"] + [test_hp_model.sleep("2026-11-26", "2026-11-25T23:00:00+08:00",
+                                                       "2026-11-26T07:00:00+08:00", 8 * 3600)]
+        return d
+
+    def run_report(self, stress_rows, a=None, now=None, **over):
+        d = self.data()
+        rows = {"sleep": d["sleep"], "daily_readiness": d["daily_readiness"],
+                "daily_activity": d["daily_activity"], "workout": [], "heartrate": d["heartrate"]}
+        get = lambda name, *a_, **kw: rows[name]
+        with tempfile.TemporaryDirectory() as tmp:
+            cwd = os.getcwd()
+            os.chdir(tmp)
+            try:
+                with patch.object(hp_usage, "CACHE_FILE", tmp + "/hp_cache.json"), \
+                     patch.object(hp_usage, "local_tz", return_value=self.TZ), \
+                     patch.object(oura_client, "get", side_effect=get), \
+                     patch.object(oura_client, "personal_info", return_value=d["personal_info"]), \
+                     patch.object(oura_client, "fetch_baseline_hr", return_value=[]), \
+                     patch.object(oura_client, "fetch_stress", return_value=stress_rows), \
+                     patch.object(hp_model, "quiet_hr", return_value=62):
+                    out = hp_usage.report(a or args(days=2), now or self.NOW, **over)
+            finally:
+                os.chdir(cwd)
+            self.assertEqual(os.listdir(tmp), [])
+        return out
+
+    def test_report_lines(self):
+        out = self.run_report([{"day": "2026-11-25", "stress_high": 600, "recovery_high": 40},
+                               {"day": "2026-11-26", "stress_high": 700, "recovery_high": 50}])
+        lines = out.split("\n")
+        self.assertEqual(len(lines), 3)
+        self.assertTrue(lines[0].startswith("2026-11-25 anchor=88(readiness) bed_hp=19"))
+        self.assertIn("stress=630/600 recovery=30/40", lines[0])
+        self.assertIn("zero=0% full=0%", lines[0])
+        self.assertTrue(lines[1].startswith("2026-11-26 "))
+        self.assertIn("stress_high 单位: 分钟", lines[2])
+        self.assertIn("stress 模型 ", lines[2])
+        self.assertIn("vs stress_high 650 ", lines[2])
+        self.assertIn("exp_load=", lines[2])
+
+    def test_report_seconds_converted(self):
+        out = self.run_report([{"day": "2026-11-25", "stress_high": 36000, "recovery_high": 1800}])
+        line = out.split("\n")[0]
+        self.assertIn("stress=630/600 recovery=30/30", line)
+        self.assertIn("stress_high 单位: 秒", out)
+
+    def test_report_without_stress_rows(self):
+        out = self.run_report([])
+        self.assertIn("stress=630/-- recovery=30/--", out)
+        self.assertIn("单位: 无数据", out)
+
+    def test_report_skips_days_without_main_sleep(self):
+        out = self.run_report([], a=args(days=2), now=hp_model.parse_ts("2026-11-28T10:00:00+08:00"))
+        lines = out.split("\n")
+        self.assertEqual(len(lines), 2)  # 11-26 reported, 11-27 skipped
+        self.assertTrue(lines[0].startswith("2026-11-26 "))
+        self.assertTrue(lines[1].startswith("汇总 1 天"))
+
+    def test_report_error_is_one_line_exit(self):
+        for exc, text in ((oura_auth.AuthRequired(), "未授权"), (oura_client.RateLimited(30), "限流"),
+                          (RuntimeError("boom"), "boom")):
+            with patch.object(hp_usage, "local_tz", return_value=self.TZ), \
+                 patch.object(oura_client, "get", side_effect=exc):
+                with self.assertRaises(SystemExit) as cm:
+                    hp_usage.report(args(days=2), self.NOW)
+            self.assertIn(text, str(cm.exception))
+            self.assertNotIn("\n", str(cm.exception))
+
+
+class CliTests(unittest.TestCase):
     def test_unknown_param_exits(self):
         with tempfile.TemporaryDirectory() as d:
             path = d + "/p.json"

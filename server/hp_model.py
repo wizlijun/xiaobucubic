@@ -499,6 +499,17 @@ def _day_note(steps, level, now, t0, r, last_awake, profile):
     return None
 
 
+def _anchor_state(anchor_day, anchor_date, m, main, data, hr_quiet, p, tz, age):
+    t0 = parse_ts(m["bedtime_end"])
+    readiness_by_day = {r["day"]: r for r in data.get("daily_readiness") or []}
+    info = data.get("personal_info") or {}
+    age = info.get("age") if info.get("age") is not None else age
+    profile = build_profile(anchor_date, main, readiness_by_day, hr_quiet, age,
+                            info.get("biological_sex"), p, tz)
+    hp0, r = anchor_value(anchor_day, m, readiness_by_day, profile, p)
+    return t0, profile, hp0, r
+
+
 def compute(now, data, hr_quiet, p, tz, age=None):
     sleeps = data.get("sleep") or []
     main = main_sleeps(sleeps)
@@ -513,13 +524,7 @@ def compute(now, data, hr_quiet, p, tz, age=None):
         return _null("none", [], None, None, None)
 
     m = main[anchor_day]
-    t0 = parse_ts(m["bedtime_end"])
-    readiness_by_day = {r["day"]: r for r in data.get("daily_readiness") or []}
-    info = data.get("personal_info") or {}
-    age = info.get("age") if info.get("age") is not None else age
-    profile = build_profile(anchor_date, main, readiness_by_day, hr_quiet, age,
-                            info.get("biological_sex"), p, tz)
-    hp0, r = anchor_value(anchor_day, m, readiness_by_day, profile, p)
+    t0, profile, hp0, r = _anchor_state(anchor_day, anchor_date, m, main, data, hr_quiet, p, tz, age)
     heartrate = [row for row in data.get("heartrate") or [] if _hr_time(row) <= now]
     activities = data.get("daily_activity") or []
     workouts = data.get("workout") or []
@@ -554,3 +559,41 @@ def compute(now, data, hr_quiet, p, tz, age=None):
     level = round_level(sleep_estimate(hp_bed, (end - ns.t_bed) / 3600, a_bar, profile.habitual_h, p))
     trend = "charging" if ns.state == "night" else "steady"
     return Result(level, status_word(level), trend, "睡眠预估", ns.state, steps, anchor_day, r, profile)
+
+
+def stress_in_minutes(values):
+    """spec D8: median below 1440 means the values are minutes, not seconds."""
+    return statistics.median(values) < 1440
+
+
+def day_summary(day, data, hr_quiet, p, tz, age=None):
+    sleeps = data.get("sleep") or []
+    main = main_sleeps(sleeps)
+    m = main.get(day)
+    if m is None:
+        return None
+    anchor_date = date.fromisoformat(day)
+    t0, profile, hp0, r = _anchor_state(day, anchor_date, m, main, data, hr_quiet, p, tz, age)
+    nxt = main.get((anchor_date + timedelta(days=1)).isoformat())
+    if nxt is not None:
+        t_end = parse_ts(nxt["bedtime_start"])
+    else:
+        nd = anchor_date + timedelta(days=1)
+        t_end = int(datetime(nd.year, nd.month, nd.day, 4, tzinfo=tz).timestamp())
+    heartrate = data.get("heartrate") or []
+    activities = data.get("daily_activity") or []
+    cells = build_cells(t0, t_end, heartrate, activities, data.get("workout") or [],
+                        nap_periods(sleeps, main, t0, t_end), tz)
+    steps = replay(hp0, cells, profile, p, data_horizon(heartrate, activities))
+    n = len(steps)
+    loads = [s.load for s in steps if s.kind not in ("nap", "unobserved")]
+    return {
+        "day": day, "anchor": round(hp0, 1),
+        "anchor_source": "readiness" if r is not None else "sleep",
+        "bed_hp": steps[-1].hp if steps else hp0,
+        "stress_min": 5 * sum(s.kind == "stress" for s in steps),
+        "recovery_min": 5 * sum(s.kind == "rest" for s in steps),
+        "pct_zero": sum(s.hp <= 0 for s in steps) / n if n else 0.0,
+        "pct_full": sum(s.hp >= 100 for s in steps) / n if n else 0.0,
+        "mean_load": _mean(loads),
+    }

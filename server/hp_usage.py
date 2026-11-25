@@ -11,11 +11,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import statistics
 import os
 import sys
 import tempfile
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import display_push
 import energy_usage
@@ -159,8 +160,83 @@ def follow(args, cycle_fn, push_fn, sleep=time.sleep, clock=time.time, max_cycle
         sleep(INTERVAL - (clock() % INTERVAL) or INTERVAL)
 
 
-def report(args, now):
-    raise SystemExit("--report: not implemented yet")
+def _stress_series(rows, key):
+    """每日 key 值（分钟）与单位判定；无值时 ({}, None)。"""
+    raw = {r["day"]: r[key] for r in rows if r.get(key) is not None and r.get("day")}
+    if not raw:
+        return {}, None
+    minutes = hp_model.stress_in_minutes(list(raw.values()))
+    return {d: (v if minutes else v / 60) for d, v in raw.items()}, minutes
+
+
+def _mean(vals):
+    return sum(vals) / len(vals) if vals else None
+
+
+def _med(vals):
+    return statistics.median(vals) if vals else None
+
+
+def _num(v, fmt="%.0f"):
+    return "--" if v is None else fmt % v
+
+
+def _report_data(now, tz, today, n):
+    one = timedelta(days=1)
+    lo, hi = (today - (n + 1) * one).isoformat(), (today + one).isoformat()
+    data = {name: oura_client.get(name, start_date=lo, end_date=hi)
+            for name in ("sleep", "daily_readiness", "daily_activity", "workout")}
+    start = datetime(today.year, today.month, today.day, tzinfo=tz) - (n + 1) * one
+    data["heartrate"] = oura_client.get("heartrate", start_datetime=start.isoformat(),
+                                        end_datetime=datetime.fromtimestamp(now, tz).isoformat())
+    try:
+        data["personal_info"] = oura_client.personal_info()
+    except oura_auth.AuthRequired:
+        raise
+    except (RuntimeError, OSError) as exc:
+        log("personal_info 获取失败，继续: %s" % exc)
+    return data
+
+
+def report(args, now, p=None):
+    tz = local_tz()
+    p = p if p is not None else hp_model.make_params()
+    today = hp_model.local_date(now, tz)
+    n = args.days
+    try:
+        data = _report_data(now, tz, today, n)
+        stress_rows = oura_client.fetch_stress(today - timedelta(days=1), n)
+        hr_quiet = hp_model.quiet_hr(oura_client.fetch_baseline_hr(today, tz))
+    except oura_auth.AuthRequired:
+        raise SystemExit("--report: Oura 未授权，请先运行 oura_auth 登录")
+    except oura_client.RateLimited as exc:
+        raise SystemExit("--report: Oura 限流 (retry_after=%s)，请稍后重试" % exc.retry_after)
+    except (RuntimeError, OSError) as exc:
+        raise SystemExit("--report: %s" % exc)
+
+    stress, s_min = _stress_series(stress_rows, "stress_high")
+    recov, r_min = _stress_series(stress_rows, "recovery_high")
+    sums = []
+    for i in range(n, 0, -1):
+        day = (today - timedelta(days=i)).isoformat()
+        s = hp_model.day_summary(day, data, hr_quiet, p, tz, age=args.age)
+        if s is not None:
+            sums.append(s)
+    lines = []
+    for s in sums:
+        lines.append("%s anchor=%.0f(%s) bed_hp=%.0f stress=%d/%s recovery=%d/%s zero=%.0f%% full=%.0f%%" % (
+            s["day"], s["anchor"], s["anchor_source"], s["bed_hp"],
+            s["stress_min"], _num(stress.get(s["day"])), s["recovery_min"], _num(recov.get(s["day"])),
+            100 * s["pct_zero"], 100 * s["pct_full"]))
+    units = {None: "无数据", True: "分钟", False: "秒"}
+    loads = [s["mean_load"] for s in sums if s["mean_load"] is not None]
+    lines.append("汇总 %d 天: bed_hp 中位 %s, stress 模型 %s vs stress_high %s (stress_high 单位: %s), "
+                 "recovery 模型 %s vs recovery_high %s (recovery_high 单位: %s), exp_load=%s" % (
+                     len(sums), _num(_med([s["bed_hp"] for s in sums])),
+                     _num(_med([s["stress_min"] for s in sums])), _num(_med(list(stress.values()))), units[s_min],
+                     _num(_med([s["recovery_min"] for s in sums])), _num(_med(list(recov.values()))), units[r_min],
+                     _num(_mean(loads), "%.2f")))
+    return "\n".join(lines)
 
 
 def explain(result, tz):
@@ -193,7 +269,7 @@ def main(argv=None):
             sys.exit("--now: 无法解析 %r" % args.now)
     p = load_params(args.params)  # 只加载一次；错误在此退出
     if args.report:
-        print(report(args, now))
+        print(report(args, now, p))
         return
     if args.push and args.follow:
         def push_fn(item):

@@ -2,9 +2,9 @@ import unittest
 from datetime import date, datetime, timedelta, timezone
 
 from hp_model import (DEFAULT_PARAMS, Cell, Profile, anchor_value, build_cells,
-                      build_profile, compute, data_horizon, main_sleeps, make_params,
+                      build_profile, compute, data_horizon, day_summary, main_sleeps, make_params,
                       nap_periods, night_state, parse_ts, quiet_hr, replay,
-                      round_level, sleep_estimate, status_word, trend_of)
+                      round_level, sleep_estimate, status_word, stress_in_minutes, trend_of)
 
 TZ = timezone(timedelta(hours=8))
 P = make_params()
@@ -677,6 +677,36 @@ class ComputeTests(unittest.TestCase):
         for s in ["充沛", "良好", "尚可", "偏低", "告急", "见底"]:
             for n in notes:
                 self.assertLessEqual(len(f"{s} · {n}"), 16)
+
+
+class DaySummaryTests(unittest.TestCase):
+    def test_day_summary_example(self):
+        data = example_day_data()
+        data["sleep"] = data["sleep"] + [sleep("2026-11-26", "2026-11-25T23:00:00+08:00",
+                                               "2026-11-26T07:00:00+08:00", 8 * 3600)]
+        s = day_summary("2026-11-25", data, 62, P, TZ)
+        self.assertAlmostEqual(s["bed_hp"], 19, delta=1)
+        self.assertEqual(s["stress_min"], 630)
+        self.assertEqual(s["recovery_min"], 30)
+        self.assertEqual(s["pct_zero"], 0)
+        self.assertEqual(s["pct_full"], 0)
+        self.assertEqual(s["anchor_source"], "readiness")
+        self.assertEqual(s["anchor"], 88)
+        self.assertGreater(s["mean_load"], 0)
+
+    def test_day_summary_no_main_sleep(self):
+        self.assertIsNone(day_summary("2026-12-01", example_day_data(), 62, P, TZ))
+
+    def test_day_summary_sleep_fallback_and_default_window(self):
+        data = example_day_data()
+        data["daily_readiness"] = []
+        s = day_summary("2026-11-25", data, 62, P, TZ)
+        self.assertEqual(s["anchor_source"], "sleep")
+        self.assertGreater(s["stress_min"], 0)
+
+    def test_stress_unit(self):
+        self.assertFalse(stress_in_minutes([2700, 3600, 1800]))
+        self.assertTrue(stress_in_minutes([45, 60, 30]))
 
 
 if __name__ == "__main__":
