@@ -181,6 +181,8 @@ def access_token(path=TOKEN_FILE, cfg=None, now=None, force_refresh=False):
         if not force_refresh and _fresh(data, now):
             return data['access_token']
         cfg = cfg or load_config()
+        if not cfg.get('client_id') or not cfg.get('client_secret'):
+            raise RuntimeError('Set OURA_CLIENT_ID and OURA_CLIENT_SECRET in oura.env')
         resp = _call_token({'grant_type': 'refresh_token', 'refresh_token': data['refresh_token'],
                             'client_id': cfg['client_id'], 'client_secret': cfg['client_secret']})
         return _store(path, resp, data, now)['access_token']

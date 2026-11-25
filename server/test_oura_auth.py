@@ -138,6 +138,27 @@ class OuraAuthTests(unittest.TestCase):
         self.assertIn('500', str(cm.exception))
         self.assertNotIn('old_r', str(cm.exception))
 
+    def test_refresh_without_credentials_does_not_post(self):
+        write_token(self.path, expires_at=NOW - 1)
+        for cfg in ({'client_id': '', 'client_secret': 'sec', 'redirect_uri': 'x'},
+                    {'client_id': 'cid', 'client_secret': '', 'redirect_uri': 'x'}):
+            with mock.patch.object(oura_auth, 'post_form') as pf:
+                with self.assertRaises(RuntimeError) as cm:
+                    oura_auth.access_token(self.path, cfg, now=NOW)
+            pf.assert_not_called()
+            self.assertIn('oura.env', str(cm.exception))
+            self.assertNotIsInstance(cm.exception, oura_auth.AuthRequired)
+
+    def test_save_failure_does_not_return_new_token(self):
+        write_token(self.path, expires_at=NOW - 1)
+        resp = {'access_token': 'new_a', 'refresh_token': 'new_r', 'expires_in': 100}
+        with mock.patch.object(oura_auth, 'post_form', return_value=resp), \
+                mock.patch.object(oura_auth.os, 'replace', side_effect=OSError('disk')):
+            with self.assertRaises(OSError):
+                oura_auth.access_token(self.path, CFG, now=NOW)
+        self.assertEqual(read_token(self.path)['refresh_token'], 'old_r')
+        self.assertEqual([n for n in os.listdir(self.tmp.name) if n.startswith('.oura-token-')], [])
+
     def test_missing_or_corrupt_token(self):
         with self.assertRaises(oura_auth.AuthRequired):
             oura_auth.access_token(self.path, CFG, now=NOW)
