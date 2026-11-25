@@ -2,9 +2,9 @@ import unittest
 from datetime import date, datetime, timedelta, timezone
 
 from hp_model import (DEFAULT_PARAMS, Cell, Profile, anchor_value, build_cells,
-                      build_profile, data_horizon, main_sleeps, make_params,
+                      build_profile, compute, data_horizon, main_sleeps, make_params,
                       nap_periods, night_state, parse_ts, quiet_hr, replay,
-                      sleep_estimate)
+                      round_level, sleep_estimate, status_word, trend_of)
 
 TZ = timezone(timedelta(hours=8))
 P = make_params()
@@ -423,6 +423,210 @@ class NightTests(unittest.TestCase):
     def test_sleep_estimate(self):
         self.assertAlmostEqual(sleep_estimate(19, 4, 88, 8, P), 68.8, places=1)
         self.assertEqual(sleep_estimate(19, 9, 88, 8, P), 88)
+
+EXAMPLE_SEGS = [("07:00", "08:00", 68, 0), ("08:00", "08:30", 95, 1), ("08:30", "12:00", 70, 0),
+                ("12:00", "12:30", 90, 1), ("12:30", "13:00", 72, 0), ("13:00", "13:30", 57, 0),
+                ("13:30", "15:30", 80, 0), ("15:30", "18:00", 68, 0), ("18:00", "18:30", 95, 1),
+                ("18:30", "19:15", 140, 1), ("19:15", "20:15", 82, 0), ("20:15", "23:00", 64, 0)]
+
+
+def example_day_data(until="2026-11-25T23:00:00+08:00", history=16):
+    """Raw-Oura style data for the example day (2026-11-25), cut at `until`."""
+    cut = parse_ts(until)
+    day0 = parse_ts("2026-11-25T00:00:00+08:00")
+
+    def hm(hhmm):
+        h, m = map(int, hhmm.split(":"))
+        return day0 + h * 3600 + m * 60
+
+    hr, kind = [], {}
+    for a, b, bpm, moving in EXAMPLE_SEGS:
+        for t in range(hm(a), hm(b), 300):
+            kind[t] = moving
+            if t <= cut:
+                hr.append({"timestamp": datetime.fromtimestamp(t, TZ).isoformat(), "bpm": bpm,
+                           "source": "workout" if moving else "awake"})
+    base = hm("04:00")
+    met = [(3.5 if kind.get(base + 60 * k - (base + 60 * k) % 300) else
+            1.2 if hm("07:00") <= base + 60 * k < hm("23:00") else 1.0)
+           for k in range(1440) if base + 60 * k <= cut]
+    cls = "".join("4" if kind.get(base + 300 * k) else "2" if hm("07:00") <= base + 300 * k < hm("23:00")
+                  else "1" for k in range(288) if base + 300 * k <= cut)
+    main = sleep("2026-11-25", "2026-11-24T23:00:00+08:00", "2026-11-25T07:00:00+08:00", 8 * 3600,
+                 lowest_heart_rate=48)
+    sleeps = [main] + list(days_before(date(2026, 11, 25), history, lowest_heart_rate=48).values())
+    readiness = [{"day": s["day"], "score": 82} for s in sleeps]
+    return {"sleep": sleeps, "daily_readiness": readiness,
+            "daily_activity": [{"timestamp": "2026-11-25T04:00:00+08:00", "class_5_min": cls,
+                                "met": {"interval": 60, "timestamp": "2026-11-25T04:00:00+08:00",
+                                        "items": met}}],
+            "workout": [], "heartrate": hr, "personal_info": {"age": 51, "biological_sex": "male"}}
+
+
+def hr_row(ts, source, bpm=55):
+    return {"timestamp": ts, "bpm": bpm, "source": source}
+
+
+def hr_run(start, end, source):
+    a, b = datetime.fromisoformat(start), datetime.fromisoformat(end)
+    out = []
+    while a <= b:
+        out.append(hr_row(a.isoformat(), source))
+        a += timedelta(minutes=5)
+    return out
+
+
+class ComputeTests(unittest.TestCase):
+    def run_at(self, now, data=None, **kw):
+        d = data or example_day_data(until=now)
+        return compute(parse_ts(now), d, 62, P, TZ, **kw)
+
+    @staticmethod
+    def cut_hr(data, until):
+        data["heartrate"] = [r for r in data["heartrate"] if parse_ts(r["timestamp"]) <= parse_ts(until)]
+        return data
+
+    def test_day_flow_payload_fields(self):
+        r = self.run_at("2026-11-25T15:30:00+08:00")
+        self.assertEqual((r.level, r.status, r.state, r.readiness, r.anchor_day),
+                         (55, "尚可", "day", 82, "2026-11-25"))
+        self.assertEqual(r.trend, "draining")
+        self.assertEqual(r.profile.valid_days, 16)
+        self.assertEqual(r.steps[-1].start, parse_ts("2026-11-25T15:25:00+08:00"))
+
+    def test_age_argument_is_fallback(self):
+        d = example_day_data(until="2026-11-25T15:30:00+08:00")
+        d["personal_info"] = {"biological_sex": "male"}
+        r = self.run_at("2026-11-25T15:30:00+08:00", d, age=51)
+        self.assertEqual(r.level, 55)
+        self.assertAlmostEqual(r.profile.hrmax, 172.3)
+
+    def test_note_readiness_first_hour(self):
+        self.assertEqual(self.run_at("2026-11-25T07:30:00+08:00").note, "准备度82")
+
+    def test_note_stress(self):
+        self.assertEqual(self.run_at("2026-11-25T15:30:00+08:00").note, "生理压力高")
+
+    def test_note_exercise(self):
+        r = self.run_at("2026-11-25T19:00:00+08:00")
+        self.assertEqual(r.note, "运动中")
+        self.assertEqual(r.steps[-1].kind, "exercise")
+
+    def test_note_unsynced_hours(self):
+        d = self.cut_hr(example_day_data(until="2026-11-25T15:30:00+08:00"), "2026-11-25T12:00:00+08:00")
+        r = self.run_at("2026-11-25T15:30:00+08:00", d)
+        self.assertEqual(r.note, "3h未同步")
+        self.assertIsNotNone(r.level)
+
+    def test_null_after_8h_no_awake_hr(self):
+        d = self.cut_hr(example_day_data(until="2026-11-25T15:30:00+08:00"), "2026-11-25T07:30:00+08:00")
+        r = self.run_at("2026-11-25T15:30:00+08:00", d)
+        self.assertEqual((r.level, r.status, r.trend, r.note), (None, "待同步", None, None))
+
+    def test_sleep_rows_do_not_count_as_awake(self):
+        d = self.cut_hr(example_day_data(until="2026-11-25T15:30:00+08:00"), "2026-11-25T07:30:00+08:00")
+        d["heartrate"] += hr_run("2026-11-25T10:00:00+08:00", "2026-11-25T15:00:00+08:00", "sleep")
+        # sleep rows before 18:00 are ignored by night_state and are not awake rows
+        self.assertIsNone(self.run_at("2026-11-25T15:30:00+08:00", d).level)
+
+    def test_no_main_sleep_today_or_yesterday(self):
+        d = example_day_data(until="2026-11-25T15:30:00+08:00")
+        d["sleep"] = [s for s in d["sleep"] if s["day"] < "2026-11-24"]
+        r = self.run_at("2026-11-25T15:30:00+08:00", d)
+        self.assertEqual((r.level, r.status, r.trend, r.anchor_day, r.profile), (None, "待同步", None, None, None))
+
+    def test_bedtime_end_in_future_not_anchor(self):
+        r = self.run_at("2026-11-25T06:00:00+08:00")
+        self.assertEqual(r.anchor_day, "2026-11-24")
+
+    def test_fallback_whole_night_no_data(self):
+        d = example_day_data(until="2026-11-25T23:00:00+08:00")
+        d["heartrate"].append(hr_row("2026-11-26T09:20:00+08:00", "awake"))
+        r = self.run_at("2026-11-26T09:31:00+08:00", d)
+        self.assertEqual((r.level, r.status, r.anchor_day, r.state), (None, "待同步", "2026-11-25", "day"))
+        # one minute earlier the 2h-after-habitual-wake fallback has not fired yet
+        self.assertIsNotNone(self.run_at("2026-11-26T09:29:00+08:00", d).level)
+
+    def night_data(self, until_rows, now):
+        d = example_day_data(until="2026-11-25T23:00:00+08:00")
+        d["heartrate"] += until_rows
+        return d
+
+    def test_night_note_and_trend(self):
+        d = self.night_data(hr_run("2026-11-25T23:10:00+08:00", "2026-11-26T02:00:00+08:00", "sleep"), None)
+        now = "2026-11-26T02:00:00+08:00"
+        r = self.run_at(now, d)
+        self.assertEqual((r.state, r.note, r.trend), ("night", "睡眠预估", "charging"))
+        t_bed = parse_ts("2026-11-25T23:10:00+08:00")
+        want = sleep_estimate(r.steps[-1].hp, (parse_ts(now) - t_bed) / 3600, 88, r.profile.habitual_h, P)
+        self.assertEqual(r.level, round_level(want))
+        self.assertGreater(r.level, round_level(r.steps[-1].hp))
+        self.assertEqual(r.steps[-1].start, parse_ts("2026-11-25T23:05:00+08:00"))
+
+    def woke_data(self):
+        rows = (hr_run("2026-11-25T23:10:00+08:00", "2026-11-26T06:55:00+08:00", "sleep")
+                + [hr_row("2026-11-26T07:00:00+08:00", "awake"), hr_row("2026-11-26T07:10:00+08:00", "awake")])
+        return self.night_data(rows, None)
+
+    def test_woke_frozen_then_null(self):
+        d = self.woke_data()
+        a = self.run_at("2026-11-26T07:40:00+08:00", d)
+        b = self.run_at("2026-11-26T08:50:00+08:00", d)
+        self.assertEqual((a.state, a.trend, a.note), ("woke", "steady", "睡眠预估"))
+        self.assertEqual(a.level, b.level)
+        hours = (parse_ts("2026-11-26T07:00:00+08:00") - parse_ts("2026-11-25T23:10:00+08:00")) / 3600
+        self.assertEqual(a.level, round_level(sleep_estimate(a.steps[-1].hp, hours, 88, a.profile.habitual_h, P)))
+        c = self.run_at("2026-11-26T09:00:00+08:00", d)
+        self.assertEqual((c.state, c.level, c.status, c.trend, c.note), ("woke_timeout", None, "待同步", None, None))
+
+    def test_new_anchor_after_sync(self):
+        d = self.woke_data()
+        d["sleep"].append(sleep("2026-11-26", "2026-11-25T23:10:00+08:00", "2026-11-26T07:00:00+08:00",
+                                7 * 3600, lowest_heart_rate=48))
+        d["daily_readiness"].append({"day": "2026-11-26", "score": 70})
+        r = self.run_at("2026-11-26T07:40:00+08:00", d)
+        self.assertEqual((r.anchor_day, r.state, r.readiness), ("2026-11-26", "day", 70))
+
+    def test_calibrating_note(self):
+        d = example_day_data(until="2026-11-25T10:00:00+08:00", history=3)
+        r = self.run_at("2026-11-25T10:00:00+08:00", d)
+        self.assertEqual((r.profile.valid_days, r.note), (3, "校准中"))
+
+    def test_low_level_note(self):
+        r = self.run_at("2026-11-25T23:00:00+08:00")
+        self.assertEqual((r.level, r.status, r.note), (19, "告急", "建议休息"))
+
+    def test_nap_just_ended_note(self):
+        d = example_day_data(until="2026-11-25T15:30:00+08:00")
+        d["sleep"].append(sleep("2026-11-25", "2026-11-25T14:30:00+08:00", "2026-11-25T15:25:00+08:00",
+                                2400, type="late_nap"))
+        r = self.run_at("2026-11-25T15:30:00+08:00", d)
+        self.assertEqual(r.note, "小憩回血")
+
+    def test_rest_note(self):
+        d = example_day_data(until="2026-11-25T13:30:00+08:00")
+        r = self.run_at("2026-11-25T13:30:00+08:00", d)  # 13:00-13:30 HR 57 is rest
+        self.assertEqual((r.steps[-1].kind, r.note), ("rest", "静息恢复"))
+
+    def test_status_boundaries(self):
+        for lv, w in ((85, "充沛"), (84, "良好"), (65, "良好"), (64, "尚可"), (45, "尚可"), (44, "偏低"),
+                      (20, "偏低"), (19, "告急"), (5, "告急"), (4, "见底"), (0, "见底"), (None, "待同步")):
+            self.assertEqual(status_word(lv), w)
+
+    def test_round_half_up(self):
+        self.assertEqual(round_level(84.5), 85)
+
+    def test_trend_thresholds(self):
+        self.assertEqual(trend_of([-2.5] * 3, P), "draining")
+        self.assertEqual(trend_of([-2.0] * 3, P), "steady")
+        self.assertEqual(trend_of([2.5] * 3, P), "charging")
+
+    def test_label_length(self):
+        notes = ["睡眠预估", "7h未同步", "准备度100", "运动中", "生理压力高", "小憩回血", "静息恢复",
+                 "建议休息", "校准中"]
+        for s in ["充沛", "良好", "尚可", "偏低", "告急", "见底"]:
+            for n in notes:
+                self.assertLessEqual(len(f"{s} · {n}"), 16)
 
 
 if __name__ == "__main__":

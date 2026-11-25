@@ -428,3 +428,127 @@ def night_state(t0, now, heartrate, profile, tz):
         return NightState("night", t_bed)
     state = "woke" if now - t_wake < WOKE_HOLD else "woke_timeout"
     return NightState(state, t_bed, t_wake)
+
+
+STATUS_BANDS = ((85, "充沛"), (65, "良好"), (45, "尚可"), (20, "偏低"), (5, "告急"))
+UNSYNCED_MIN_H, UNSYNCED_MAX_H = 3, 8
+DAY_FALLBACK_AFTER_WAKE = 7200
+DAY_FALLBACK_AGE = 20 * 3600
+
+
+@dataclass
+class Result:
+    level: int | None
+    status: str
+    trend: str | None
+    note: str | None
+    state: str
+    steps: list
+    anchor_day: str | None
+    readiness: int | None
+    profile: Profile | None
+
+
+def round_level(x):
+    return math.floor(x + 0.5)
+
+
+def status_word(level):
+    if level is None:
+        return "待同步"
+    for lo, word in STATUS_BANDS:
+        if level >= lo:
+            return word
+    return "见底"
+
+
+def trend_of(rates, p):
+    m = _mean(rates[-3:]) if rates else 0.0
+    if m >= p["trend_band"]:
+        return "charging"
+    if m <= -p["trend_band"]:
+        return "draining"
+    return "steady"
+
+
+def _null(state, steps, anchor_day, readiness, profile):
+    return Result(None, status_word(None), None, None, state, steps, anchor_day, readiness, profile)
+
+
+def _day_note(steps, level, now, t0, r, last_awake, profile):
+    h = (now - last_awake) // 3600
+    if UNSYNCED_MIN_H <= h < UNSYNCED_MAX_H:
+        return f"{int(h)}h未同步"
+    if r is not None and now - t0 < 3600:
+        return f"准备度{r}"
+    last3 = steps[-3:]
+    if len(last3) == 3 and all(s.kind == "exercise" for s in last3) and _mean([s.load for s in last3]) >= 6:
+        return "运动中"
+    if len(last3) == 3 and all(s.kind == "stress" for s in last3) and _mean([s.load for s in last3]) >= 3:
+        return "生理压力高"
+    if any(a.kind == "nap" and b.kind != "nap" for a, b in zip(last3, last3[1:])):
+        return "小憩回血"
+    if steps and steps[-1].kind == "rest":
+        return "静息恢复"
+    if level < 20:
+        return "建议休息"
+    if profile.valid_days < 14:
+        return "校准中"
+    return None
+
+
+def compute(now, data, hr_quiet, p, tz, age=None):
+    sleeps = data.get("sleep") or []
+    main = main_sleeps(sleeps)
+    today = local_date(now, tz)
+    anchor_day = None
+    for d in (today, today - timedelta(days=1)):
+        m = main.get(d.isoformat())
+        if m is not None and parse_ts(m["bedtime_end"]) <= now:
+            anchor_day, anchor_date = d.isoformat(), d
+            break
+    if anchor_day is None:
+        return _null("none", [], None, None, None)
+
+    m = main[anchor_day]
+    t0 = parse_ts(m["bedtime_end"])
+    readiness_by_day = {r["day"]: r for r in data.get("daily_readiness") or []}
+    info = data.get("personal_info") or {}
+    age = info.get("age") if info.get("age") is not None else age
+    profile = build_profile(anchor_date, main, readiness_by_day, hr_quiet, age,
+                            info.get("biological_sex"), p, tz)
+    hp0, r = anchor_value(anchor_day, m, readiness_by_day, profile, p)
+    heartrate = [row for row in data.get("heartrate") or [] if _hr_time(row) <= now]
+    activities = data.get("daily_activity") or []
+    workouts = data.get("workout") or []
+    naps = nap_periods(sleeps, main, t0, now)
+    horizon = data_horizon(heartrate, activities)
+    ns = night_state(t0, now, heartrate, profile, tz)
+
+    if ns.state == "day":
+        cells = build_cells(t0, now, heartrate, activities, workouts, naps, tz)
+        steps = replay(hp0, cells, profile, p, horizon)
+        awake = [_hr_time(row) for row in heartrate
+                 if row.get("bpm") is not None and row.get("source") in AWAKE_SOURCES and _hr_time(row) >= t0]
+        last_awake = max(awake) if awake else t0
+        wake_instant = (datetime(today.year, today.month, today.day, tzinfo=tz)
+                        + timedelta(minutes=profile.wake_min)).timestamp()
+        if (now - last_awake >= UNSYNCED_MAX_H * 3600
+                or (now >= wake_instant + DAY_FALLBACK_AFTER_WAKE and now - t0 > DAY_FALLBACK_AGE)):
+            return _null("day", steps, anchor_day, r, profile)
+        hp = steps[-1].hp if steps else hp0
+        level = round_level(hp)
+        trend = trend_of([s.rate for s in steps], p) if steps else "steady"
+        note = _day_note(steps, level, now, t0, r, last_awake, profile)
+        return Result(level, status_word(level), trend, note, "day", steps, anchor_day, r, profile)
+
+    cells = build_cells(t0, ns.t_bed, heartrate, activities, workouts, naps, tz)
+    steps = replay(hp0, cells, profile, p, horizon)
+    if ns.state == "woke_timeout":
+        return _null(ns.state, steps, anchor_day, r, profile)
+    hp_bed = steps[-1].hp if steps else hp0
+    a_bar = profile.anchor_median if profile.anchor_median is not None else hp0
+    end = now if ns.state == "night" else ns.t_wake
+    level = round_level(sleep_estimate(hp_bed, (end - ns.t_bed) / 3600, a_bar, profile.habitual_h, p))
+    trend = "charging" if ns.state == "night" else "steady"
+    return Result(level, status_word(level), trend, "睡眠预估", ns.state, steps, anchor_day, r, profile)
