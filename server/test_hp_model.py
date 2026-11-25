@@ -31,6 +31,12 @@ def days_before(day, n, **kw):
 
 
 class FoundationTests(unittest.TestCase):
+    def test_parse_ts_z_suffix_and_fraction(self):
+        from hp_model import parse_ts
+        self.assertEqual(parse_ts("2026-11-24T00:00:00Z"), parse_ts("2026-11-24T08:00:00+08:00"))
+        self.assertIsInstance(parse_ts("2026-11-24T00:00:00Z"), int)
+        self.assertEqual(parse_ts("2026-11-24T00:00:00.000+08:00"), parse_ts("2026-11-24T00:00:00+08:00"))
+
     def setUp(self):
         self.day = date(2026, 11, 25)
         self.prof = build_profile(self.day, {}, {}, None, None, None, P, TZ)

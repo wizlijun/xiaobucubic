@@ -26,6 +26,8 @@ def make_params(overrides=None):
 
 
 def parse_ts(value):
+    if value.endswith("Z"):
+        value = value[:-1] + "+00:00"
     return int(datetime.fromisoformat(value).timestamp())
 
 

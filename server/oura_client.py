@@ -7,6 +7,7 @@ import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta
 
+import hp_model
 import oura_auth
 
 API = "https://api.ouraring.com/v2/usercollection/"
@@ -75,10 +76,6 @@ def personal_info(token=oura_auth.access_token):
     return _fetch("personal_info", API + "personal_info", token)
 
 
-def _ts(value):
-    return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
-
-
 def _midnight(day, tz):
     return datetime(day.year, day.month, day.day, tzinfo=tz)
 
@@ -95,7 +92,7 @@ def _daily(name, lo, hi, token):
 
 def _heartrate(start, end, token):
     rows = get("heartrate", token, start_datetime=start.isoformat(), end_datetime=end.isoformat())
-    return [r for r in rows if start.timestamp() <= _ts(r["timestamp"]) <= end.timestamp()]
+    return [r for r in rows if int(start.timestamp()) <= hp_model.parse_ts(r["timestamp"]) <= int(end.timestamp())]
 
 
 def fetch_all(now, tz, token=oura_auth.access_token):
@@ -113,7 +110,7 @@ def fetch_all(now, tz, token=oura_auth.access_token):
 def fetch_baseline_hr(day, tz, token=oura_auth.access_token):
     start, end = _midnight(day - timedelta(days=28), tz), _midnight(day, tz)
     rows = get("heartrate", token, start_datetime=start.isoformat(), end_datetime=end.isoformat())
-    return [r for r in rows if start.timestamp() <= _ts(r["timestamp"]) < end.timestamp()]
+    return [r for r in rows if int(start.timestamp()) <= hp_model.parse_ts(r["timestamp"]) < int(end.timestamp())]
 
 
 def fetch_stress(day, days, token=oura_auth.access_token):
