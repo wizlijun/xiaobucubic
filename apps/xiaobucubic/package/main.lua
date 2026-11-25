@@ -237,7 +237,6 @@ local function draw_subscriptions()
     local p=data.subscriptions[card.index]
     local id="quota."..slot
     local width,height=card.width,card.height
-    local grid=width<200
     -- Both layers must be translucent: an opaque panel would hide the weather
     -- even when the progress tint itself has a low opacity.
     local panel=box(id,root,card.x,card.y,width,height,C.panel,7,state.background and 52 or 255)
@@ -257,26 +256,30 @@ local function draw_subscriptions()
     style(fill,"bg_grad_dir",LV_GRAD_DIR_VER)
     style(fill,"bg_main_stop",0);style(fill,"bg_grad_stop",255)
     local balance=w and w.remaining_bytes and (model.format_bytes(w.remaining_bytes).."/"..model.format_bytes(w.total_bytes))
-    local top=(height<45 or grid) and 2 or 5
-    local value_width=grid and 50 or balance and 176 or 82
+    local ultra=height<29
+    local tight=not ultra and height<35
+    local top=ultra and 0 or tight and 1 or height<45 and 2 or 5
+    local name_font=ultra and small or medium
+    local name_h=ultra and 13 or tight and 16 or 20
+    local value_width=balance and 176 or 82
     local value_x=width-12-value_width
-    label(id..".name",panel,grid and 6 or 10,top,value_x-(grid and 10 or 16),20,p.name,medium,C.text,LV_TEXT_ALIGN_LEFT,clip)
-    label(id..".value",panel,value_x,top,value_width,20,
-      not grid and balance or value and num(value,"%") or "--",medium,tone,LV_TEXT_ALIGN_RIGHT,clip)
+    label(id..".name",panel,10,top,value_x-16,name_h,p.name,name_font,C.text,LV_TEXT_ALIGN_LEFT,clip)
+    label(id..".value",panel,value_x,top,value_width,name_h,
+      balance or value and num(value,"%") or "--",name_font,tone,LV_TEXT_ALIGN_RIGHT,clip)
     local detail=model.window_label(w)
     -- With two windows, omit the redundant official-source label so the
-    -- window and reset time fit without a moving marquee. Keep non-official sources.
+    -- window and reset time fit without a moving marquee. Keep non-official sources,
+    -- except HP: its detail line is a full sentence of numbers and advice.
     if balance then detail=detail.." · "..(value and num(value,"%") or "--")
-    elseif (not companion and not grid and height>=45) or p.source~="official" then detail=detail.." · "..source_names[p.source] end
+    elseif p.id~="energy" and ((not companion and height>=45) or p.source~="official") then
+      detail=detail.." · "..source_names[p.source] end
     if status=="stale" then detail=detail.." · 已过期"
     elseif status=="expired" then detail=detail.." · 待刷新"
     elseif w and w.reset_at then detail=detail.." "..reset_date(w.reset_at) end
-    local detail_y=(height<45 or grid) and 21 or 28
-    label(id..".detail",panel,grid and 6 or 10,detail_y,grid and width-12 or companion and 120 or width-20,
-      (height<45 or grid) and 13 or 15,grid and balance or detail,small,C.muted,LV_TEXT_ALIGN_LEFT,clip)
-    if grid and balance and not companion then
-      label(id..".reset",panel,6,35,width-12,13,detail,small,C.muted,LV_TEXT_ALIGN_LEFT,clip)
-    end
+    local detail_y=ultra and 12 or tight and 16 or height<45 and 21 or 28
+    local detail_h=ultra and 12 or tight and 12 or height<45 and 13 or 15
+    label(id..".detail",panel,10,detail_y,companion and 120 or width-20,
+      detail_h,detail,small,C.muted,LV_TEXT_ALIGN_LEFT,clip)
     if companion then
       local secondary_status=model.window_state(p,companion,now(),data.stale_after_seconds)
       local secondary_value=model.remaining(companion)
@@ -291,12 +294,11 @@ local function draw_subscriptions()
         local reset=reset_date(companion.reset_at)
         if reset~="" then summary=summary.." "..reset end
       end
-      label(id..".secondary.label",panel,grid and 6 or width-164,grid and 35 or detail_y,
-        grid and width-12 or 152,(height<45 or grid) and 13 or 15,summary,small,secondary_tone,LV_TEXT_ALIGN_RIGHT,
-        grid and LV_LABEL_LONG_SCROLL or clip)
+      label(id..".secondary.label",panel,width-164,detail_y,
+        152,detail_h,summary,small,secondary_tone,LV_TEXT_ALIGN_RIGHT,clip)
       -- A narrow inset rail blends into the bottom of the main quota fill.
-      local rail_y,rail_height=height-3,2
-      if not grid and height>=45 then rail_y=height-6;rail_height=4 end
+      local rail_y,rail_height=(ultra or tight) and height-2 or height-3,2
+      if height>=45 then rail_y=height-6;rail_height=4 end
       box(id..".secondary.track",panel,10,rail_y,width-22,rail_height,C.muted,2,24)
       local rail=box(id..".secondary.fill",panel,10,rail_y,
         secondary_value and math.max(1,(width-22)*math.min(secondary_value,100)/100) or 1,rail_height,

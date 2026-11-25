@@ -300,10 +300,40 @@ class DisplayTest(unittest.TestCase):
         self.assertEqual(w.remaining_bytes,0)
         self.assertEqual(self.model.remaining(w),0)
 
-    def test_unknown_provider_two_windows_and_grid_geometry(self):
+    def test_five_subscriptions_stay_single_column_without_overflow(self):
+        self.fixture["subscriptions"]=self.dynamic_subscriptions(5)
+        self.fixture["subscriptions"][0]["windows"].append({"label":"7天","used_percent":40})
+        self.fixture["subscriptions"][4]["windows"][0].update(total_bytes=1000,used_bytes=250)
+        data=self.normalize(self.fixture)
+        cards,page=self.model.subscription_layout(data,1)
+        self.assertEqual(page,1)
+        self.assertEqual(len(cards),5)
+        for card in cards.values():
+            self.assertEqual(card.width,296)
+            self.assertEqual(card.x,12)
+        g=self.boot();g.requests[1](200,"valid")
+        self.assertIn("60%",list(g.labels.values()))
+        self.assertIn("750B/1000B",list(g.labels.values()))
+        for label in g.labels:
+            parent=g.nodes[label]
+            if parent!=0:
+                pos,size=g.positions[label],g.sizes[label]
+                panel=g.sizes[parent]
+                self.assertGreaterEqual(pos.x,0);self.assertGreaterEqual(pos.y,0)
+                self.assertLessEqual(pos.x+size.width,panel.width)
+                self.assertLessEqual(pos.y+size.height,panel.height)
+
+    def test_unknown_provider_two_windows_and_six_item_single_column(self):
         self.fixture["subscriptions"]=self.dynamic_subscriptions(6)
         self.fixture["subscriptions"][0]["windows"].append({"label":"年额度","used_percent":50})
         self.fixture["subscriptions"][5]["windows"][0].update(total_bytes=1000,used_bytes=400)
+        data=self.normalize(self.fixture)
+        cards,page=self.model.subscription_layout(data,1)
+        self.assertEqual(page,1)
+        self.assertEqual(len(cards),6)
+        for card in cards.values():
+            self.assertEqual(card.width,296)
+            self.assertEqual(card.x,12)
         g=self.boot();g.requests[1](200,"valid")
         self.assertIn("年额度 50%",list(g.labels.values()))
         self.assertIn("600B/1000B",list(g.labels.values()))

@@ -4,9 +4,9 @@ import Foundation
 enum Tone: Equatable { case critical, low, accent, muted }
 
 enum HomeLayout {
-    /// 与设备一致：每页最多 6 张，超过 4 张时排成两列。
+    /// 与设备一致：每页最多 6 张，始终单列显示。
     static let perPage = 6
-    static func columns(visible: Int) -> Int { visible > 4 ? 2 : 1 }
+    static func columns(visible: Int) -> Int { 1 }
 }
 
 struct HomeRow: Equatable {
@@ -38,7 +38,8 @@ struct HomeRow: Equatable {
         let remaining = DisplayModel.remaining(w)
         let percent = remaining.map { "\($0)%" } ?? "--"
         let balance = w?.totalBytes.map { "\(Format.bytes(w?.remainingBytes))/\(Format.bytes($0))" }
-        let showSource = (second == nil && !grid && tall) || sub.source != "official"
+        // HP 的说明行是一整句数值 + 建议，不再追加来源。
+        let showSource = sub.id != "energy" && ((second == nil && !grid && tall) || sub.source != "official")
         var detail = Format.windowLabel(w)
         if let balance, !balance.isEmpty { detail += " · " + percent }
         else if showSource { detail += " · " + sourceName(sub.source) }

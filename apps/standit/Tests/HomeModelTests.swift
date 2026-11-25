@@ -21,6 +21,12 @@ final class HomeModelTests: XCTestCase {
         XCTAssertNil(row.companion)
     }
 
+    func testEnergyRowOmitsSource() {
+        let w = QuotaWindow(label: "睡前约34% · 宜放松", usedPercent: 57, resetAt: nil)
+        let hp = Subscription(id: "energy", name: "HP", source: "estimated", updatedAt: now, windows: [w])
+        XCTAssertEqual(HomeRow.make(hp, now: now, ttl: 900, grid: false, tall: true).detail, "睡前约34% · 宜放松")
+    }
+
     func testCompanionRowDropsOfficialSourceAndWeekLabel() {
         let row = HomeRow.make(sub([QuotaWindow(label: "5小时", usedPercent: 85),
                                     QuotaWindow(label: "7天", usedPercent: 41)]),
@@ -58,8 +64,9 @@ final class HomeModelTests: XCTestCase {
 
     func testColumnsAndPaging() {
         XCTAssertEqual(HomeLayout.perPage, 6)
-        XCTAssertEqual(HomeLayout.columns(visible: 4), 1)
-        XCTAssertEqual(HomeLayout.columns(visible: 5), 2)
+        for visible in 1...6 {
+            XCTAssertEqual(HomeLayout.columns(visible: visible), 1)
+        }
     }
 
     func testAccentOrderMatchesDevice() {

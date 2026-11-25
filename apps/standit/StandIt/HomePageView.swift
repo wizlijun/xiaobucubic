@@ -63,19 +63,18 @@ struct HomePage: View {
     private func rows(size: CGSize, u: CGFloat, translucent: Bool) -> some View {
         let first = (page % max(1, (snapshot.subscriptions.count + HomeLayout.perPage - 1) / HomeLayout.perPage)) * HomeLayout.perPage
         let visible = Array(snapshot.subscriptions.indices.dropFirst(first).prefix(HomeLayout.perPage))
-        let columns = HomeLayout.columns(visible: visible.count)
-        let rowCount = (visible.count + columns - 1) / columns
-        let top = (showsWeather ? 72 : 26) * u, gap = 3 * u
-        let avail = size.height - top - 8 * u
+        let rowCount = max(1, visible.count)
+        let top = (showsWeather ? 72 : 26) * u, gap = (rowCount >= 6 ? 2 : 3) * u
+        let avail = size.height - top - (rowCount >= 6 ? 4 : 8) * u
         let rowH = max(20 * u, min((avail - gap * CGFloat(rowCount - 1)) / CGFloat(rowCount), 52 * u * 1.6))
-        let cardW = (size.width - 24 * u - 4 * u * CGFloat(columns - 1)) / CGFloat(columns)
+        let cardW = size.width - 24 * u
         return ForEach(Array(visible.enumerated()), id: \.offset) { slot, i in
             HomeRowView(row: HomeRow.make(snapshot.subscriptions[i], now: now, ttl: snapshot.staleAfter,
-                                          grid: columns > 1, tall: rowH >= 45 * u),
-                        accent: Palette.cardHex(i), grid: columns > 1, translucent: translucent,
+                                          grid: false, tall: rowH >= 45 * u),
+                        accent: Palette.cardHex(i), grid: false, translucent: translucent,
                         u: u * min(1.6, max(1, rowH / (52 * u))), baseTall: rowH >= 45 * u)
                 .frame(width: cardW, height: rowH)
-                .offset(x: 12 * u + CGFloat(slot % columns) * (cardW + 4 * u), y: top + CGFloat(slot / columns) * (rowH + gap))
+                .offset(x: 12 * u, y: top + CGFloat(slot) * (rowH + gap))
         }
     }
 }
@@ -123,6 +122,12 @@ struct HomeRowView: View {
         GeometryReader { geo in
             let w = geo.size.width, h = geo.size.height
             let compact = !baseTall || grid
+            let ultra = !grid && h < 29 * u
+            let tight = !grid && !ultra && h < 36 * u
+            let topY: CGFloat = ultra ? 0.5 : (tight ? 1 : (compact ? 2 : 5))
+            let detailY: CGFloat = ultra ? 13 : (tight ? 16 : (compact ? 21 : 28))
+            let titleSize: CGFloat = ultra ? 10.5 : 12
+            let smallSize: CGFloat = ultra ? 8.5 : 9
             let x0 = (grid ? 6 : 10) * u
             let hex = Palette.toneHex(row.tone, accent: accent)
             let color = Color(hex: hex)
@@ -139,20 +144,20 @@ struct HomeRowView: View {
                     Spacer(minLength: 0)
                     Text(row.value).foregroundStyle(color).monospacedDigit()
                 }
-                .font(.system(size: 12 * u)).lineLimit(1)
-                .padding(.leading, x0).padding(.trailing, 12 * u).offset(y: (compact ? 2 : 5) * u)
+                .font(.system(size: titleSize * u)).lineLimit(1)
+                .padding(.leading, x0).padding(.trailing, 12 * u).offset(y: topY * u)
                 .frame(width: w, alignment: .leading)
-                small(row.detail, color: Palette.muted)
-                    .frame(width: w - x0 - 12 * u, alignment: .leading).offset(x: x0, y: (compact ? 21 : 28) * u)
+                small(row.detail, color: Palette.muted, size: smallSize)
+                    .frame(width: w - x0 - 12 * u, alignment: .leading).offset(x: x0, y: detailY * u)
                 if let extra = row.extra {
-                    small(extra, color: Palette.muted).frame(width: w - x0 - 12 * u, alignment: .leading).offset(x: x0, y: 35 * u)
+                    small(extra, color: Palette.muted, size: smallSize).frame(width: w - x0 - 12 * u, alignment: .leading).offset(x: x0, y: 35 * u)
                 }
                 if let c = row.companion {
                     let chex = Palette.toneHex(c.tone, accent: accent)
                     let cc = Color(hex: chex)
-                    small(c.text, color: cc)
+                    small(c.text, color: cc, size: smallSize)
                         .frame(width: grid ? w - 12 * u : 152 * u, alignment: grid ? .leading : .trailing)
-                        .offset(x: grid ? x0 : w - 164 * u, y: (grid ? 35 : compact ? 21 : 28) * u)
+                        .offset(x: grid ? x0 : w - 164 * u, y: (grid ? 35 : detailY) * u)
                     let thick = !grid && baseTall
                     let railH = (thick ? 4 : 2) * u
                     let railW = w - 22 * u
@@ -166,7 +171,7 @@ struct HomeRowView: View {
                         }
                     }
                     .frame(width: railW, height: railH)
-                    .offset(x: 10 * u, y: h - (thick ? 6 : 3) * u)
+                    .offset(x: 10 * u, y: h - (thick ? 6 : (ultra ? 2 : (tight ? 2.5 : 3))) * u)
                 }
             }
             .frame(width: w, height: h, alignment: .topLeading)
@@ -174,7 +179,7 @@ struct HomeRowView: View {
         }
     }
 
-    private func small(_ text: String, color: Color) -> some View {
-        Text(text).font(.system(size: 9 * u)).foregroundStyle(color).lineLimit(1).truncationMode(.tail)
+    private func small(_ text: String, color: Color, size: CGFloat = 9) -> some View {
+        Text(text).font(.system(size: size * u)).foregroundStyle(color).lineLimit(1).truncationMode(.tail)
     }
 }

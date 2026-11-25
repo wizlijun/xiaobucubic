@@ -18,6 +18,7 @@ Authorization: Bearer <read_token>
   "generated_at": 1792659600,
   "stale_after_seconds": 900,
   "subscriptions": [],
+  "energy": null,
   "messages": [],
   "weather": null
 }
@@ -31,7 +32,8 @@ Authorization: Bearer <read_token>
 | `generated_at` | 必填，响应生成时间 |
 | `stale_after_seconds` | 可选，数据有效期，默认 900 秒，范围 30–86400 |
 | `demo` | 可选，`true` 显示醒目的“演示”标识；生产数据设 `false` 或省略 |
-| `subscriptions` | 必填数组，保留全部项目，按服务端顺序动态排版；1–4 项单列、5–6 项双列，更多项目每页最多 6 项自动轮播，也可左 / 右翻页 |
+| `subscriptions` | 必填数组，保留全部项目，按服务端顺序始终单列动态排版；每页最多 6 项，更多项目自动轮播，也可左 / 右翻页 |
+| `energy` | 可选，个人能量对象或 `null`；非 `null` 时作为首位卡片并入主页进度条列表，`null` 时隐藏 |
 | `messages` | 必填数组，最多 12 条，在同一个消息页依次展示；`[]` 时只显示主页 |
 | `weather` | 对象或 `null`；融合在主页，不设独立天气页 |
 
@@ -60,6 +62,25 @@ Authorization: Bearer <read_token>
 - 重置时间按 `reset_at` 显示，默认 UTC+8；当天仅显示时分，其余本周（周一至周日）显示星期与时分，跨周显示月／日与时分，跨年补年份。`7天` 窗口的显示名称改为“周限”，次窗口说明形如 `37% 周四21:00重置`；窗口选择仍按数组顺序。
 - 缺失或过期的 `updated_at`、已到期的 `reset_at` 会标记过期 / 待刷新，不擅自将用量归零。
 - `plan`、`note` 为预留说明字段；当前小屏总览只显示名称、百分比、窗口、来源和重置时间。
+
+个人能量项（可选，`null` 或省略时隐藏）：
+
+```json
+{
+  "name": "HP",
+  "level_percent": 78,
+  "status": "充沛",
+  "trend": "steady",
+  "note": "睡眠 7.5h · HRV 62",
+  "source": "manual",
+  "updated_at": 1792659540,
+  "stale_after_seconds": 14400
+}
+```
+
+- `level_percent` 为当前剩余能量百分比（`0–100`），`null` 或省略显示 `--`。服务端在响应 `GET /v1/display` 时自动将其投影为 `subscriptions` 首项（`id: "energy"`，`used_percent = 100 - level_percent`），现有客户端无需升级即可动态展示；`energy` 为 `null` 时自动隐藏。
+- `status` 为可选短状态；省略时按 `trend`（`charging` → `回血中`、`draining` → `消耗中`、`steady` → `平稳`）或默认 `当前` 显示。`note` 与 `status` 合并长度不超过 16 字时自动拼入窗口标签。
+- `stale_after_seconds` 为可选独立有效期（60–604800 秒），有效期内服务端保持投影项未过期，超过后按真实 `updated_at` 标为过期。
 
 提醒项：
 

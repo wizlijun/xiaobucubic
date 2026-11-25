@@ -131,14 +131,15 @@ function M.subscription_layout(data, page)
   page=math.max(1,math.min(page or 1,M.quota_pages(data)))
   local first=(page-1)*6+1
   local visible=math.min(6,count-first+1)
-  local columns=visible>4 and 2 or 1
-  local rows=math.max(1,math.ceil(visible/columns))
-  local height=math.min(52,math.floor((164-(rows-1)*3)/rows))
-  local width=columns==2 and 146 or 296
+  local rows=math.max(1,visible)
+  local gap=rows>=6 and 2 or 3
+  local avail=rows>=6 and 166 or 164
+  local height=math.min(52,math.floor((avail-(rows-1)*gap)/rows))
+  local width=296
   local cards={}
   for i=1,visible do
-    cards[#cards+1]={index=first+i-1,x=12+((i-1)%columns)*(width+4),
-      y=72+math.floor((i-1)/columns)*(height+3),width=width,height=height}
+    cards[#cards+1]={index=first+i-1,x=12,
+      y=72+(i-1)*(height+gap),width=width,height=height}
   end
   return cards,page
 end

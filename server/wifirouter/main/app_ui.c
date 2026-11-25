@@ -277,7 +277,6 @@ static void subscriptions(app_view_t *s, int64_t now)
         const app_window_t *w = p->count ? &p->windows[0] : NULL;
         const app_window_t *companion = p->count > 1 ? &p->windows[1] : NULL;
         int width = card->width, height = card->height;
-        bool grid = width < 200;
         char id[64], detail[384], reset[64], percent[32], balance[80] = "";
 #define ID(suffix) (snprintf(id, sizeof(id), "quota.%d" suffix, i), id)
         lv_obj_t *panel = box(ID(""), root, card->x, card->y, width, height, PANEL, 7, background ? 52 : 255);
@@ -290,13 +289,16 @@ static void subscriptions(app_view_t *s, int64_t now)
             char remaining[32], total[32]; app_format_bytes(w->remaining_bytes, remaining); app_format_bytes(w->total_bytes, total);
             snprintf(balance, sizeof(balance), "%s/%s", remaining, total);
         }
-        int top = height < 45 || grid ? 2 : 5;
-        int value_width = grid ? 50 : balance[0] ? 176 : 82, value_x = width - 12 - value_width;
-        label(ID(".name"), panel, grid ? 6 : 10, top, value_x - (grid ? 10 : 16), 20, p->name, medium, TEXT, LV_TEXT_ALIGN_LEFT, LV_LABEL_LONG_DOT);
+        bool ultra = height < 29;
+        bool tight = !ultra && height < 35;
+        int top = ultra ? 0 : tight ? 1 : height < 45 ? 2 : 5;
+        int name_h = ultra ? 13 : tight ? 16 : 20;
+        int value_width = balance[0] ? 176 : 82, value_x = width - 12 - value_width;
+        label(ID(".name"), panel, 10, top, value_x - 16, name_h, p->name, medium, TEXT, LV_TEXT_ALIGN_LEFT, LV_LABEL_LONG_DOT);
         snprintf(percent, sizeof(percent), value >= 0 ? "%d%%" : "--", value);
-        label(ID(".value"), panel, value_x, top, value_width, 20, !grid && balance[0] ? balance : percent, medium, color, LV_TEXT_ALIGN_RIGHT, LV_LABEL_LONG_DOT);
+        label(ID(".value"), panel, value_x, top, value_width, name_h, balance[0] ? balance : percent, medium, color, LV_TEXT_ALIGN_RIGHT, LV_LABEL_LONG_DOT);
         const char *source = !strcmp(p->source, "official") ? "官方" : !strcmp(p->source, "manual") ? "手动" : !strcmp(p->source, "estimated") ? "估算" : "待接入";
-        bool show_source = (!companion && !grid && height >= 45) || strcmp(p->source, "official");
+        bool show_source = (!companion && height >= 45) || strcmp(p->source, "official");
         snprintf(detail, sizeof(detail), "%s%s%s", app_window_label(w), balance[0] || show_source ? " · " : "", balance[0] ? percent : show_source ? source : "");
         app_reset_date(w ? w->reset : 0, now, s->utc_offset_minutes, reset);
         const char *extra = status == APP_STALE ? " · 已过期" : status == APP_EXPIRED ? " · 待刷新" : "";
@@ -304,11 +306,10 @@ static void subscriptions(app_view_t *s, int64_t now)
         if (status != APP_STALE && status != APP_EXPIRED && reset[0]) {
             strncat(detail, " ", sizeof(detail) - strlen(detail) - 1); strncat(detail, reset, sizeof(detail) - strlen(detail) - 1);
         }
-        int detail_y = height < 45 || grid ? 21 : 28, detail_h = height < 45 || grid ? 13 : 15;
-        label(ID(".detail"), panel, grid ? 6 : 10, detail_y, grid ? width - 12 : companion ? 120 : width - 20,
-              detail_h, grid && balance[0] ? balance : detail, small, MUTED, LV_TEXT_ALIGN_LEFT, LV_LABEL_LONG_DOT);
-        if (grid && balance[0] && !companion)
-            label(ID(".reset"), panel, 6, 35, width - 12, 13, detail, small, MUTED, LV_TEXT_ALIGN_LEFT, LV_LABEL_LONG_DOT);
+        int detail_y = ultra ? 13 : tight ? 16 : height < 45 ? 21 : 28;
+        int detail_h = ultra ? 11 : tight ? 12 : height < 45 ? 13 : 15;
+        label(ID(".detail"), panel, 10, detail_y, companion ? 120 : width - 20,
+              detail_h, detail, small, MUTED, LV_TEXT_ALIGN_LEFT, LV_LABEL_LONG_DOT);
         if (companion) {
             status = app_window_state(p, companion, now, s->snapshot->ttl); value = app_remaining(companion); color = tone(value, status, accent);
             snprintf(percent, sizeof(percent), value >= 0 ? "%d%%" : "--", value);
@@ -319,10 +320,10 @@ static void subscriptions(app_view_t *s, int64_t now)
             if (status != APP_STALE && status != APP_EXPIRED && reset[0]) {
                 strncat(detail, " ", sizeof(detail) - strlen(detail) - 1); strncat(detail, reset, sizeof(detail) - strlen(detail) - 1);
             }
-            label(ID(".secondary.label"), panel, grid ? 6 : width - 164, grid ? 35 : detail_y, grid ? width - 12 : 152,
-                  detail_h, detail, small, color, LV_TEXT_ALIGN_RIGHT, grid ? LV_LABEL_LONG_SCROLL : LV_LABEL_LONG_DOT);
-            int rail_y = height - 3, rail_height = 2;
-            if (!grid && height >= 45) { rail_y = height - 6; rail_height = 4; }
+            label(ID(".secondary.label"), panel, width - 164, detail_y, 152,
+                  detail_h, detail, small, color, LV_TEXT_ALIGN_RIGHT, LV_LABEL_LONG_DOT);
+            int rail_y = (ultra || tight) ? height - 2 : height - 3, rail_height = 2;
+            if (height >= 45) { rail_y = height - 6; rail_height = 4; }
             box(ID(".secondary.track"), panel, 10, rail_y, width - 22, rail_height, MUTED, 2, 24);
             fill = box(ID(".secondary.fill"), panel, 10, rail_y, value > 0 ? fmax(1, (width - 22.0) * value / 100) : 1, rail_height, color, 2,
                        value > 0 ? status == APP_OK ? 112 : 55 : 0);

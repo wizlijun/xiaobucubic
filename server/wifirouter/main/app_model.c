@@ -163,12 +163,13 @@ int app_subscription_layout(const app_snapshot_t *data, int page, app_card_t car
     if (page >= pages) page = pages - 1;
     int first = page * 6, visible = data ? data->subscription_count - first : 0;
     if (visible > 6) visible = 6;
-    int columns = visible > 4 ? 2 : 1, rows = (visible + columns - 1) / columns;
-    if (rows < 1) rows = 1;
-    int height = (164 - (rows - 1) * 3) / rows;
+    int rows = visible > 1 ? visible : 1;
+    int gap = rows >= 6 ? 2 : 3;
+    int avail = rows >= 6 ? 166 : 164;
+    int height = (avail - (rows - 1) * gap) / rows;
     if (height > 52) height = 52;
-    int width = columns == 2 ? 146 : 296;
-    for (int i = 0; i < visible; ++i) cards[i] = (app_card_t){first + i, 12 + i % columns * (width + 4), 72 + i / columns * (height + 3), width, height};
+    int width = 296;
+    for (int i = 0; i < visible; ++i) cards[i] = (app_card_t){first + i, 12, 72 + i * (height + gap), width, height};
     return visible;
 }
 const char *app_window_label(const app_window_t *w) { return !w ? "暂无用量" : !strcmp(w->label, "7天") ? "周限" : w->label; }
