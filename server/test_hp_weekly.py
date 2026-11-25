@@ -110,6 +110,14 @@ class ActivityTests(unittest.TestCase):
                      [{"day": "2026-11-22", "stress_high": 120}, {"day": "2026-11-23", "stress_high": 50}]):
             self.assertEqual(run(stress=rows)["items"]["stress"], 0.5)
 
+    def test_calm_week_in_seconds_not_read_as_minutes(self):
+        rows = [{"day": "2026-11-22", "stress_high": 900}, {"day": "2026-11-23", "stress_high": 900}]
+        self.assertEqual(run(stress=rows)["items"]["stress"], 0.0)
+
+    def test_unit_judged_from_all_rows(self):
+        rows = [{"day": "2026-11-18", "stress_high": 8100}, {"day": "2026-11-22", "stress_high": 1350}]
+        self.assertEqual(run(stress=rows)["items"]["stress"], 0.0)   # 1350 秒 = 22.5 分钟
+
 
 class CellTests(unittest.TestCase):
     def test_drain_and_rest_only_inside_week(self):

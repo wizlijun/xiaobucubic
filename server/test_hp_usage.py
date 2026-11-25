@@ -486,7 +486,7 @@ class ReportTests(unittest.TestCase):
         self.assertTrue(lines[1].startswith("汇总 1 天"))
 
     def test_report_weekly_backtest(self):
-        out = self.run_report([{"day": "2026-11-25", "stress_high": 600}], a=args(days=2))
+        out = self.run_report([{"day": "2026-11-25", "stress_high": 150}], a=args(days=2))
         weeks = [l for l in out.split("\n") if l.startswith("周 ")]
         self.assertEqual(len(weeks), 1)
         self.assertTrue(weeks[0].startswith("周 11-21 起（数据不全）（进行中）: 负债 "))

@@ -7,7 +7,7 @@ from __future__ import annotations
 import math
 from datetime import datetime, timedelta
 
-from hp_model import NAP_TYPES, _fit, _safe_ts, _sleep_ok, _z, main_sleeps, stress_in_minutes
+from hp_model import NAP_TYPES, _fit, _safe_ts, _sleep_ok, _z, main_sleeps
 
 BUDGET_H = 7.0
 RESET_WEEKDAY, RESET_HOUR = 5, 12          # 周六 12:00
@@ -47,6 +47,12 @@ def _wall_clock(iso, tz):
     except (TypeError, ValueError):
         pass
     return datetime.fromtimestamp(_safe_ts(iso), tz)
+
+
+def stress_in_minutes(values):
+    """Oura 的 stress_high 按文档是秒（实测都是 900 的倍数）。只有全部 ≤1440 且出现非 300 倍数时才当分钟；
+    拿不准时按秒，负债只会偏少，不会把平静的一周算成 70 小时。"""
+    return bool(values) and max(values) <= 1440 and any(v % 300 for v in values)
 
 
 def _num(row, key):
@@ -106,13 +112,12 @@ def compute(now, tz, sleeps, activities, stress_rows, steps, profile):
         n = _num(a, "steps")
         if a["day"] < today and n is not None and n < STEPS_MIN:
             add(a["day"], "sedentary", SEDENTARY_H)
-    rows = [r for r in filter(in_week, stress_rows) if _num(r, "stress_high") is not None]
-    if rows:
-        minutes = stress_in_minutes([r["stress_high"] for r in rows])
-        for r in rows:
-            over = (r["stress_high"] if minutes else r["stress_high"] / 60) - STRESS_ALLOW_MIN
-            if over > 0:
-                add(r["day"], "stress", STRESS_WEIGHT * over / 60)
+    known = [r for r in stress_rows if _num(r, "stress_high") is not None]
+    minutes = stress_in_minutes([r["stress_high"] for r in known])   # 用全部行判断单位，不只看本周
+    for r in filter(in_week, known):
+        over = (r["stress_high"] if minutes else r["stress_high"] / 60) - STRESS_ALLOW_MIN
+        if over > 0:
+            add(r["day"], "stress", STRESS_WEIGHT * over / 60)
 
     # 5 分钟格：透支与休息还款。
     for s in steps:
