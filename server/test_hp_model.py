@@ -512,6 +512,49 @@ class ComputeTests(unittest.TestCase):
         self.assertEqual(r.note, "运动中")
         self.assertEqual(r.steps[-1].kind, "exercise")
 
+    def spiked(self, now, bpm_1910):
+        d = example_day_data(until=now)
+        for r in d["heartrate"]:
+            if r["timestamp"].startswith("2026-11-25T19:10"):
+                r["bpm"] = bpm_1910
+        return d
+
+    def test_exercise_note_mean_over_last_three(self):
+        # only the 19:10 cell is exercise among the last 3 (19:10, 19:15, 19:20)
+        now = "2026-11-25T19:25:00+08:00"
+        r = self.run_at(now, self.spiked(now, 160))
+        self.assertEqual([s.kind == "exercise" for s in r.steps[-3:]], [True, False, False])
+        self.assertGreaterEqual(r.steps[-3].load, 18)
+        self.assertEqual(r.note, "运动中")
+        r = self.run_at(now, self.spiked(now, 140))
+        self.assertEqual([s.kind == "exercise" for s in r.steps[-3:]], [True, False, False])
+        self.assertLess(r.steps[-3].load / 3, 6)
+        self.assertNotEqual(r.note, "运动中")
+
+    def test_note_priority_unsynced_over_exercise(self):
+        now = "2026-11-25T19:00:00+08:00"
+        d = self.cut_hr(example_day_data(until=now), "2026-11-25T15:30:00+08:00")
+        met = d["daily_activity"][0]["met"]
+        base = parse_ts(met["timestamp"])
+        met["items"] = [8.0 if base + 60 * k >= parse_ts("2026-11-25T18:30:00+08:00") else v
+                        for k, v in enumerate(met["items"])]
+        r = self.run_at(now, d)
+        last3 = r.steps[-3:]
+        self.assertTrue(all(s.kind == "exercise" for s in last3))
+        self.assertGreaterEqual(sum(s.load for s in last3) / 3, 6)
+        self.assertEqual(r.note, "3h未同步")
+
+    def test_note_priority_readiness_over_stress(self):
+        now = "2026-11-25T07:50:00+08:00"
+        d = example_day_data(until=now)
+        for row in d["heartrate"]:
+            row["bpm"] = 80
+        r = self.run_at(now, d)
+        last3 = r.steps[-3:]
+        self.assertTrue(all(s.kind == "stress" for s in last3))
+        self.assertGreaterEqual(sum(s.load for s in last3) / 3, 3)
+        self.assertEqual(r.note, "准备度82")
+
     def test_note_unsynced_hours(self):
         d = self.cut_hr(example_day_data(until="2026-11-25T15:30:00+08:00"), "2026-11-25T12:00:00+08:00")
         r = self.run_at("2026-11-25T15:30:00+08:00", d)
@@ -547,16 +590,17 @@ class ComputeTests(unittest.TestCase):
         # one minute earlier the 2h-after-habitual-wake fallback has not fired yet
         self.assertIsNotNone(self.run_at("2026-11-26T09:29:00+08:00", d).level)
 
-    def night_data(self, until_rows, now):
+    def night_data(self, until_rows):
         d = example_day_data(until="2026-11-25T23:00:00+08:00")
         d["heartrate"] += until_rows
         return d
 
     def test_night_note_and_trend(self):
-        d = self.night_data(hr_run("2026-11-25T23:10:00+08:00", "2026-11-26T02:00:00+08:00", "sleep"), None)
-        now = "2026-11-26T02:00:00+08:00"
+        d = self.night_data(hr_run("2026-11-25T23:10:00+08:00", "2026-11-26T03:30:00+08:00", "sleep"))
+        now = "2026-11-26T03:30:00+08:00"  # last awake row (23:00) is 4.5h old
         r = self.run_at(now, d)
         self.assertEqual((r.state, r.note, r.trend), ("night", "睡眠预估", "charging"))
+        self.assertIsNotNone(r.level)
         t_bed = parse_ts("2026-11-25T23:10:00+08:00")
         want = sleep_estimate(r.steps[-1].hp, (parse_ts(now) - t_bed) / 3600, 88, r.profile.habitual_h, P)
         self.assertEqual(r.level, round_level(want))
@@ -566,7 +610,7 @@ class ComputeTests(unittest.TestCase):
     def woke_data(self):
         rows = (hr_run("2026-11-25T23:10:00+08:00", "2026-11-26T06:55:00+08:00", "sleep")
                 + [hr_row("2026-11-26T07:00:00+08:00", "awake"), hr_row("2026-11-26T07:10:00+08:00", "awake")])
-        return self.night_data(rows, None)
+        return self.night_data(rows)
 
     def test_woke_frozen_then_null(self):
         d = self.woke_data()

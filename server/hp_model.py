@@ -463,7 +463,7 @@ def status_word(level):
 
 
 def trend_of(rates, p):
-    m = _mean(rates[-3:]) if rates else 0.0
+    m = _mean(rates[-3:]) if rates else 0.0  # no steps yet: steady
     if m >= p["trend_band"]:
         return "charging"
     if m <= -p["trend_band"]:
@@ -482,7 +482,7 @@ def _day_note(steps, level, now, t0, r, last_awake, profile):
     if r is not None and now - t0 < 3600:
         return f"准备度{r}"
     last3 = steps[-3:]
-    if len(last3) == 3 and all(s.kind == "exercise" for s in last3) and _mean([s.load for s in last3]) >= 6:
+    if last3 and _mean([s.load if s.kind == "exercise" else 0.0 for s in last3]) >= 6:
         return "运动中"
     if len(last3) == 3 and all(s.kind == "stress" for s in last3) and _mean([s.load for s in last3]) >= 3:
         return "生理压力高"
@@ -538,7 +538,7 @@ def compute(now, data, hr_quiet, p, tz, age=None):
             return _null("day", steps, anchor_day, r, profile)
         hp = steps[-1].hp if steps else hp0
         level = round_level(hp)
-        trend = trend_of([s.rate for s in steps], p) if steps else "steady"
+        trend = trend_of([s.rate for s in steps], p)
         note = _day_note(steps, level, now, t0, r, last_awake, profile)
         return Result(level, status_word(level), trend, note, "day", steps, anchor_day, r, profile)
 
