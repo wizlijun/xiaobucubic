@@ -8,3 +8,4 @@ server/oura_token.json
 server/oura_token.json.lock
 server/hp_cache.json
 server/.oura-token-*
+server/.hp_cache-*
