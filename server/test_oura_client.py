@@ -171,8 +171,8 @@ class FetchAllTest(unittest.TestCase):
         self.assertEqual([r["day"] for r in out["sleep"]],
                          ["2026-10-26", "2026-11-25", "2026-11-26"])
         self.assertEqual([r["day"] for r in out["daily_readiness"]], ["2026-10-26", "2026-11-26"])
-        self.assertEqual([r["day"] for r in out["daily_activity"]], ["2026-11-24", "2026-11-26"])
-        self.assertEqual([r["day"] for r in out["workout"]], ["2026-11-24"])
+        self.assertEqual([r["day"] for r in out["daily_activity"]], ["2026-11-23", "2026-11-24", "2026-11-26"])
+        self.assertEqual([r["day"] for r in out["workout"]], ["2026-11-23", "2026-11-24"])
         self.assertEqual([r["timestamp"] for r in out["heartrate"]],
                          ["2026-11-24T00:00:00+08:00", "2026-11-25T03:00:00Z"])
         self.assertEqual(set(out), {"sleep", "daily_readiness", "daily_activity", "workout", "heartrate",
@@ -180,11 +180,11 @@ class FetchAllTest(unittest.TestCase):
         names = [urlsplit(r[0].full_url).path.rsplit("/", 1)[1] for r in reqs]
         self.assertEqual(names, ["sleep", "daily_readiness", "daily_activity", "workout", "heartrate",
                                  "daily_stress"])
-        self.assertEqual([r["day"] for r in out["daily_stress"]], ["2026-11-25"])
-        # query padding D-31..D+2 for sleep, D-2..D+2 for activity
+        self.assertEqual([r["day"] for r in out["daily_stress"]], ["2026-11-24", "2026-11-25"])
+        # query padding D-31..D+2 for sleep, D-8..D+2 for activity (week)
         self.assertEqual(q(reqs[0][0])["start_date"], ["2026-10-25"])
         self.assertEqual(q(reqs[0][0])["end_date"], ["2026-11-27"])
-        self.assertEqual(q(reqs[2][0])["start_date"], ["2026-11-23"])
+        self.assertEqual(q(reqs[2][0])["start_date"], ["2026-11-17"])
         self.assertEqual(q(reqs[2][0])["end_date"], ["2026-11-27"])
         self.assertEqual(q(reqs[4][0])["start_datetime"], ["2026-11-24T00:00:00+08:00"])
         self.assertEqual(q(reqs[4][0])["end_datetime"], ["2026-11-25T12:00:00+08:00"])
@@ -210,6 +210,16 @@ class FetchAllTest(unittest.TestCase):
         with mock.patch.object(oura_client, "get", side_effect=[[]] * 5 + [oura_auth.AuthRequired("x")]):
             with self.assertRaises(oura_auth.AuthRequired):
                 oura_client.fetch_all(now_ts(self.D), SH, token=Tok())
+
+
+class DayHrTest(unittest.TestCase):
+    def test_day_window(self):
+        rows = [{"timestamp": "2026-11-23T23:59:59+08:00"}, {"timestamp": "2026-11-24T00:00:00+08:00"},
+                {"timestamp": "2026-11-25T12:00:00+08:00"}, {"timestamp": "2026-11-25T12:00:01+08:00"}]
+        out, reqs = run([{"data": rows}], oura_client.fetch_day_hr, date(2026, 11, 24), SH, token=Tok())
+        self.assertEqual([r["timestamp"] for r in out],
+                         ["2026-11-24T00:00:00+08:00", "2026-11-25T12:00:00+08:00"])
+        self.assertEqual(q(reqs[0][0])["end_datetime"], ["2026-11-25T12:00:00+08:00"])
 
 
 class BaselineStressTest(unittest.TestCase):

@@ -97,16 +97,20 @@ def _heartrate(start, end, token):
     return [r for r in rows if int(start.timestamp()) <= hp_model.parse_ts(r["timestamp"]) <= int(end.timestamp())]
 
 
+WEEK_DAYS = 7
+
+
 def fetch_all(now, tz, token=oura_auth.access_token):
     d = datetime.fromtimestamp(now, tz).date()
     one = timedelta(days=1)
     return {
         "sleep": _daily("sleep", d - 30 * one, d + one, token),
         "daily_readiness": _daily("daily_readiness", d - 30 * one, d + one, token),
-        "daily_activity": _daily("daily_activity", d - one, d + one, token),
-        "workout": _daily("workout", d - one, d + one, token),
+        # 活动、运动、压力取近 7 天：周限（hp_weekly）要用本周每天的数据。
+        "daily_activity": _daily("daily_activity", d - WEEK_DAYS * one, d + one, token),
+        "workout": _daily("workout", d - WEEK_DAYS * one, d + one, token),
         "heartrate": _heartrate(_midnight(d - one, tz), datetime.fromtimestamp(now, tz), token),
-        "daily_stress": _optional_daily("daily_stress", d, d, token),
+        "daily_stress": _optional_daily("daily_stress", d - WEEK_DAYS * one, d, token),
     }
 
 
@@ -118,6 +122,12 @@ def _optional_daily(name, lo, hi, token):
         raise
     except (RuntimeError, OSError):
         return []
+
+
+def fetch_day_hr(day, tz, token=oura_auth.access_token):
+    """某一天 00:00 到次日 12:00 的心率，足够覆盖当天醒着到次晚入睡。"""
+    start = _midnight(day, tz)
+    return _heartrate(start, start + timedelta(hours=36), token)
 
 
 def fetch_baseline_hr(day, tz, token=oura_auth.access_token):

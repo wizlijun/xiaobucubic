@@ -1,3 +1,4 @@
+import dataclasses
 import json
 import os
 import tempfile
@@ -13,20 +14,30 @@ import display_server
 import energy_usage
 import hp_model
 import hp_usage
+import hp_weekly
 import oura_auth
 import oura_client
 import test_hp_model
 
 
 _log_patch = patch.object(hp_usage, "log")
+_tmp = tempfile.TemporaryDirectory()
+# 周限会逐日补拉心率并写周缓存：测试里一律打桩，不碰网络和真实缓存文件。
+_weekly_patches = [patch.object(hp_usage, "WEEKLY_CACHE", os.path.join(_tmp.name, "weekly.json")),
+                   patch.object(oura_client, "fetch_day_hr", return_value=[])]
 
 
 def setUpModule():
     _log_patch.start()
+    for p in _weekly_patches:
+        p.start()
 
 
 def tearDownModule():
     _log_patch.stop()
+    for p in _weekly_patches:
+        p.stop()
+    _tmp.cleanup()
 
 
 class QuietHandler(display_server.Handler):
@@ -78,6 +89,105 @@ class ItemTests(unittest.TestCase):
         item = hp_usage.auth_item(1795581200)
         self.assertIsNone(item["level_percent"])
         self.assertEqual(item["status"], "待授权")
+
+
+class WeeklyTests(unittest.TestCase):
+    TZ = timezone(timedelta(hours=8))
+    NOW = hp_model.parse_ts("2026-11-25T22:00:00+08:00")
+    START = hp_model.parse_ts("2026-11-21T12:00:00+08:00")
+    LOW = {"remaining_percent": 10, "debt_hours": 6.3, "reset_at": 1795834800, "top": "sleep",
+           "items": {}, "days": [{"day": "2026-11-22"}]}
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.path = os.path.join(self.tmp.name, "weekly.json")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def res(self, note=None, line="睡前约34% · 宜放松", state="day"):
+        return dataclasses.replace(result(note=note), line=line, state=state, anchor_day="2026-11-25")
+
+    def run_weekly(self, res, weekly=LOW, fetch=None):
+        with patch.object(hp_weekly, "compute", return_value=weekly), \
+             patch.object(hp_model, "day_steps", return_value=None):
+            return hp_usage.with_weekly(res, self.NOW, self.TZ, {}, 62, None, None,
+                                        fetch_hr=fetch or (lambda d: []), path=self.path)
+
+    def test_line_override_when_low(self):
+        out = self.run_weekly(self.res())
+        self.assertEqual(out.line, "本周欠6.3h · 该补觉")
+        self.assertEqual(out.weekly["remaining_percent"], 10)
+
+    def test_urgent_notes_keep_line(self):
+        for note in ("运动中", "生理压力高", "3h未同步", "准备度低"):
+            self.assertEqual(self.run_weekly(self.res(note=note)).line, "睡前约34% · 宜放松", note)
+
+    def test_night_state_keeps_line(self):
+        self.assertIsNone(self.run_weekly(self.res(line=None, state="sleep")).line)
+
+    def test_not_low_keeps_line(self):
+        out = self.run_weekly(self.res(), weekly=dict(self.LOW, remaining_percent=40))
+        self.assertEqual(out.line, "睡前约34% · 宜放松")
+
+    def test_error_omits_weekly(self):
+        with patch.object(hp_weekly, "compute", side_effect=ValueError("bad")):
+            out = hp_usage.with_weekly(self.res(), self.NOW, self.TZ, {}, 62, None, None,
+                                       fetch_hr=lambda d: [], path=self.path)
+        self.assertIsNone(out.weekly)
+        self.assertEqual(out.line, "睡前约34% · 宜放松")
+
+    def test_auth_required_propagates(self):
+        def fetch(day):
+            raise oura_auth.AuthRequired("x")
+        with self.assertRaises(oura_auth.AuthRequired):
+            self.run_weekly(self.res(), fetch=fetch)
+
+    def test_build_item_carries_weekly_without_ledger(self):
+        r = dataclasses.replace(result(), weekly=self.LOW)
+        item = hp_usage.build_item(r, 1795581200)
+        self.assertEqual(item["weekly"]["remaining_percent"], 10)
+        self.assertNotIn("days", item["weekly"])
+        self.assertNotIn("weekly", hp_usage.build_item(result(), 1795581200))
+
+    def step(self, t, hp=10.0):
+        return hp_model.Step(t, "still", 0.0, hp, None, None, 0.0)
+
+    def test_past_days_replayed_once_and_cached(self):
+        calls = []
+
+        def fake_day_steps(day, data, *a):
+            calls.append(day)
+            t = hp_model.parse_ts(day + "T15:00:00+08:00")
+            return [self.step(t)], 50.0, None
+
+        res = dataclasses.replace(self.res(), steps=[self.step(self.NOW - 300, hp=40)])
+        with patch.object(hp_model, "day_steps", side_effect=fake_day_steps):
+            a = hp_usage.weekly_steps(self.NOW, self.TZ, res, {}, 62, None, None, lambda d: [], self.path)
+            b = hp_usage.weekly_steps(self.NOW, self.TZ, res, {}, 62, None, None, lambda d: [], self.path)
+        self.assertEqual(calls, ["2026-11-21", "2026-11-22", "2026-11-23", "2026-11-24"])
+        self.assertEqual(len(a), 5)
+        self.assertEqual([s.start for s in a], [s.start for s in b])
+        self.assertEqual(a[-1].hp, 40)
+
+    def test_fetch_failure_not_cached(self):
+        def fetch(day):
+            if day.isoformat() == "2026-11-23":
+                raise RuntimeError("HTTP 500")
+            return []
+        with patch.object(hp_model, "day_steps", return_value=None):
+            hp_usage.weekly_steps(self.NOW, self.TZ, self.res(), {}, 62, None, None, fetch, self.path)
+        with open(self.path) as f:
+            cached = json.load(f)
+        self.assertEqual(cached["week_start"], self.START)
+        self.assertEqual(sorted(cached["days"]), ["2026-11-21", "2026-11-22", "2026-11-24"])
+
+    def test_previous_week_cache_ignored(self):
+        with open(self.path, "w") as f:
+            json.dump({"week_start": self.START - 7 * 86400, "days": {"2026-11-22": [[1, "still", 5]]}}, f)
+        with patch.object(hp_model, "day_steps", return_value=None):
+            out = hp_usage.weekly_steps(self.NOW, self.TZ, self.res(), {}, 62, None, None, lambda d: [], self.path)
+        self.assertEqual(out, [])
 
 
 class CycleTests(unittest.TestCase):
@@ -346,7 +456,7 @@ class ReportTests(unittest.TestCase):
     def test_report_lines(self):
         out = self.run_report([{"day": "2026-11-25", "stress_high": 600, "recovery_high": 40},
                                {"day": "2026-11-26", "stress_high": 700, "recovery_high": 50}])
-        lines = out.split("\n")
+        lines = [l for l in out.split("\n") if not l.startswith("周 ")]
         self.assertEqual(len(lines), 3)
         self.assertTrue(lines[0].startswith("2026-11-25 anchor=88(readiness) bed_hp=19"))
         self.assertIn("stress=630/600 recovery=30/40", lines[0])
@@ -370,10 +480,20 @@ class ReportTests(unittest.TestCase):
 
     def test_report_skips_days_without_main_sleep(self):
         out = self.run_report([], a=args(days=2), now=hp_model.parse_ts("2026-11-28T10:00:00+08:00"))
-        lines = out.split("\n")
+        lines = [l for l in out.split("\n") if not l.startswith("周 ")]
         self.assertEqual(len(lines), 2)  # 11-26 reported, 11-27 skipped
         self.assertTrue(lines[0].startswith("2026-11-26 "))
         self.assertTrue(lines[1].startswith("汇总 1 天"))
+
+    def test_report_weekly_backtest(self):
+        out = self.run_report([{"day": "2026-11-25", "stress_high": 600}], a=args(days=2))
+        weeks = [l for l in out.split("\n") if l.startswith("周 ")]
+        self.assertEqual(len(weeks), 1)
+        self.assertTrue(weeks[0].startswith("周 11-21 起（数据不全）（进行中）: 负债 "))
+        self.assertIn("stress=", weeks[0])
+        out = self.run_report([], a=args(days=2), now=hp_model.parse_ts("2026-11-28T13:00:00+08:00"))
+        weeks = [l for l in out.split("\n") if l.startswith("周 ")]
+        self.assertEqual([w.split(":")[0] for w in weeks], ["周 11-21 起（数据不全）", "周 11-28 起（进行中）"])
 
     def test_report_error_is_one_line_exit(self):
         for exc, text in ((oura_auth.AuthRequired(), "未授权"), (oura_client.RateLimited(30), "限流"),

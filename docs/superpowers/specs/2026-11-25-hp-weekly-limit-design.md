@@ -35,13 +35,13 @@
 | # | 项目 | 标准 | 负债 | 数据 |
 |---|---|---|---|---|
 | 1 | 睡眠不足 | 每晚 ≥7h | 不足部分 1:1 | sleep.total_sleep_duration（主睡眠 + 小睡） |
-| 2 | 熬夜 | 00:00 前入睡 | 入睡时间每晚 1h 记 0.25h（12:00 前的入睡时间才算晚睡） | 主睡眠 bedtime_start |
+| 2 | 熬夜 | 00:00 前入睡 | 入睡时间每晚 1h 记 0.25h（12:00 前的入睡时间才算晚睡；钟点按记录自带的时区，即戒指所在地） | 主睡眠 bedtime_start |
 | 3 | 运动不足 | 每周 150 分钟中等强度当量（高强度 ×2） | 应完成量按本周已过时间折算；每差 60 分钟记 1h，最多 2.5h | daily_activity medium/high_activity_time |
 | 4 | 久坐 | 每天 ≥5000 步 | 每个已结束且不足的日子记 0.25h（当天不算，到第二天才结算） | daily_activity.steps |
 | 5 | 运动过量 | 周高强度 ≤300 分钟 | 超出部分每 1h 记 1h | daily_activity.high_activity_time |
 | 6 | 高压 | 每天 ≤60 分钟 | 超出部分每 1h 记 0.5h | daily_stress.stress_high（单位用 stress_in_minutes 判定） |
 | 7 | 透支 | 醒着时 HP ≥20% | HP <20% 的时间每 1h 记 0.5h | HP 重放的 Step（排除 nap） |
-| 8 | 恢复不足 | 晨间 HRV 和静息心率在个人基线附近 | `_z` 计算的 HRV z ≤ −1 或静息心率 z ≥ 1，当天记 1h（只记一次） | 主睡眠 average_hrv、lowest_heart_rate 与 28 天画像 |
+| 8 | 恢复不足 | 晨间 HRV 和静息心率在个人基线附近 | `_z` 计算的 HRV z ≤ −1，或静息心率 z ≥ 1 且比基线高 ≥3 bpm，当天记 1h（只记一次） | 主睡眠 average_hrv、lowest_heart_rate 与 28 天画像 |
 
 还款（只能抵扣已经欠下的，不能预存）：
 
@@ -69,7 +69,7 @@
 ```
 
 `energy_to_subscription` 在 `weekly` 存在时追加第二个额度
-`{"label": "周", "used_percent": 100 − remaining, "reset_at": reset_at}`。
+`{"label": "7天", "used_percent": 100 − remaining, "reset_at": reset_at}`（设备显示为「周限」，iPhone 隐藏标签）。
 客户端现有的第二额度显示（配色、重置倒计时）直接生效。`weekly` 缺失时只显示日 HP，和现在一样。
 
 ## 说明行
@@ -94,7 +94,7 @@
 - `fetch_all` 把 daily_activity、workout、daily_stress 的起始日期扩到本周开始那一天
   （最多多取 6 天，都是按天的小接口）。
 - 第 7 项和休息还款需要过去各天的心率重放。已结束的日子（第二晚的主睡眠已经出现）只算一次，
-  结果存进 `hp_cache.json` 的 `weekly_days`（按日期存透支分钟数和休息分钟数），过了重置时间就清掉。
+  结果存进单独的 `hp_weekly_cache.json`（按 week_start 存各天的 Step 摘要），过了重置时间就作废。
   缺少的日子在下一轮补拉心率。补拉失败不致命：那几天按 0 计，日志里写明。
 - 周限计算出错时，记日志并省略 `weekly`，不影响日 HP 的提交。
 

@@ -495,6 +495,7 @@ class Result:
     readiness: int | None
     profile: Profile | None
     line: str | None = None  # 卡片第二行（数值 + 建议），仅白天
+    weekly: dict | None = None  # 周限（hp_weekly.compute），由 hp_usage 填入
 
 
 def round_level(x):
@@ -673,7 +674,8 @@ def stress_in_minutes(values):
     return statistics.median(values) < 1440
 
 
-def day_summary(day, data, hr_quiet, p, tz, age=None):
+def day_steps(day, data, hr_quiet, p, tz, age=None):
+    """重放某个已结束的日子：从当天醒来到次晚入睡（无次晚数据则到次日 04:00）。返回 (steps, hp0, readiness)，无主睡眠时 None。"""
     sleeps = data.get("sleep") or []
     main = main_sleeps(sleeps)
     m = main.get(day)
@@ -692,6 +694,14 @@ def day_summary(day, data, hr_quiet, p, tz, age=None):
     cells = build_cells(t0, t_end, heartrate, activities, data.get("workout") or [],
                         nap_periods(sleeps, main, t0, t_end), tz)
     steps = replay(hp0, cells, profile, p, data_horizon(heartrate, activities))
+    return steps, hp0, r
+
+
+def day_summary(day, data, hr_quiet, p, tz, age=None):
+    out = day_steps(day, data, hr_quiet, p, tz, age)
+    if out is None:
+        return None
+    steps, hp0, r = out
     n = len(steps)
     loads = [s.load for s in steps if s.kind not in ("nap", "unobserved", "offwrist")]
     return {

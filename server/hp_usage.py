@@ -4,12 +4,13 @@
 用法:
     python3 hp_usage.py                  # 计算一次，打印摘要
     python3 hp_usage.py --json           # 打印 payload
-    python3 hp_usage.py --explain        # 打印当日每格明细
+    python3 hp_usage.py --explain        # 打印当日每格明细和本周周限账本
     python3 hp_usage.py --push --follow  # 常驻：由 display_server 调度，有终端读取时才访问 Oura
 """
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import statistics
 import os
@@ -21,10 +22,13 @@ from datetime import datetime, timedelta
 import display_push
 import energy_usage
 import hp_model
+import hp_weekly
 import oura_auth
 import oura_client
 
 CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hp_cache.json")
+WEEKLY_CACHE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hp_weekly_cache.json")
+URGENT_NOTES = ("运动中", "生理压力高")
 ENERGY_PATH = "/v1/energy"
 STALE_AFTER = 1800
 
@@ -36,10 +40,13 @@ def log(msg):
 
 
 def build_item(result, now):
-    return energy_usage.build_payload(
+    item = energy_usage.build_payload(
         level=result.level, status=result.line or result.status, trend=result.trend,
         note=None if result.line else result.note,
         source="estimated", stale_after=STALE_AFTER, updated_at=now)
+    if result.weekly:
+        item["weekly"] = hp_weekly.public(result.weekly)
+    return item
 
 
 def auth_item(now):
@@ -135,7 +142,71 @@ def compute_result(args, now, p=None, tz=None):
     if _PERSONAL_INFO:
         data["personal_info"] = _PERSONAL_INFO
     hr_quiet = cached_hr_quiet(hp_model.local_date(now, tz), _baseline_fetcher(tz))
-    return hp_model.compute(now, data, hr_quiet, p, tz, age=args.age)
+    res = hp_model.compute(now, data, hr_quiet, p, tz, age=args.age)
+    return with_weekly(res, now, tz, data, hr_quiet, p, args.age)
+
+
+def _read_weekly(path, start):
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict) and data.get("week_start") == start and isinstance(data.get("days"), dict):
+            return data["days"]
+    except (OSError, ValueError):
+        pass
+    return None
+
+
+def weekly_steps(now, tz, res, data, hr_quiet, p, age, fetch_hr, path=None):
+    """本周已结束日子的 Step 只重放一次，存进周缓存；加上当天的 res.steps。"""
+    path = path or WEEKLY_CACHE
+    start, _ = hp_weekly.week_bounds(now, tz)
+    days = _read_weekly(path, start)
+    dirty = days is None
+    days = days or {}
+    last = res.anchor_day or hp_model.local_date(now, tz).isoformat()
+    day, steps = datetime.fromtimestamp(start, tz).date(), []
+    while day.isoformat() < last:
+        key = day.isoformat()
+        if key not in days:
+            try:
+                out = hp_model.day_steps(key, dict(data, heartrate=fetch_hr(day)), hr_quiet, p, tz, age)
+                days[key] = [[s.start, s.kind, round(s.hp, 1)] for s in out[0]] if out else []
+                dirty = True
+            except oura_auth.AuthRequired:
+                raise
+            except (RuntimeError, OSError) as exc:  # 不缓存，下一轮重试
+                log("周限：%s 心率补拉失败，本轮按 0 计: %s" % (key, exc))
+        steps += [hp_model.Step(t, k, 0.0, hp, None, None, 0.0) for t, k, hp in days.get(key, [])]
+        day += timedelta(days=1)
+    if dirty:
+        try:
+            _write_cache(path, {"week_start": start, "days": days})
+        except OSError as exc:
+            log("无法写入周限缓存: %s" % exc)
+    return steps + list(res.steps)
+
+
+def _urgent(note):
+    return bool(note) and (note.endswith("h未同步") or note.startswith("准备度") or note in URGENT_NOTES)
+
+
+def with_weekly(res, now, tz, data, hr_quiet, p, age, fetch_hr=None, path=None):
+    """算出周限并填入 res；周限出错只记日志，不影响日 HP。"""
+    fetch_hr = fetch_hr or (lambda day: oura_client.fetch_day_hr(day, tz))
+    try:
+        steps = weekly_steps(now, tz, res, data, hr_quiet, p, age, fetch_hr, path)
+        weekly = hp_weekly.compute(now, tz, data.get("sleep") or [], data.get("daily_activity") or [],
+                                   data.get("daily_stress") or [], steps, res.profile)
+    except oura_auth.AuthRequired:
+        raise
+    except Exception as exc:
+        log("周限计算失败，本轮不显示: %s: %s" % (type(exc).__name__, exc))
+        return res
+    line = res.line
+    if res.state == "day" and line is not None and not _urgent(res.note):
+        line = hp_weekly.line(weekly) or line
+    return dataclasses.replace(res, weekly=weekly, line=line)
 
 
 def cycle(args, now, p=None):
@@ -219,12 +290,13 @@ def report(args, now, p=None):
 
     stress, s_min = _stress_series(stress_rows, "stress_high")
     recov, r_min = _stress_series(stress_rows, "recovery_high")
-    sums = []
+    sums, steps = [], []
     for i in range(n, 0, -1):
         day = (today - timedelta(days=i)).isoformat()
         s = hp_model.day_summary(day, data, hr_quiet, p, tz, age=args.age)
         if s is not None:
             sums.append(s)
+            steps += hp_model.day_steps(day, data, hr_quiet, p, tz, age=args.age)[0]
     lines = []
     for s in sums:
         lines.append("%s anchor=%.0f(%s) bed_hp=%.0f stress=%d/%s recovery=%d/%s zero=%.0f%% full=%.0f%%" % (
@@ -239,7 +311,25 @@ def report(args, now, p=None):
                      _num(_med([s["stress_min"] for s in sums])), _num(_med(list(stress.values()))), units[s_min],
                      _num(_med([s["recovery_min"] for s in sums])), _num(_med(list(recov.values()))), units[r_min],
                      _num(_mean(loads), "%.2f")))
+    lines += weekly_backtest(now, tz, today - timedelta(days=n), data, stress_rows, steps)
     return "\n".join(lines)
+
+
+def weekly_backtest(now, tz, first, data, stress_rows, steps):
+    """按周六 12:00 切分报告区间，逐周给出周限结算（恢复项需要画像，回算里不计）。"""
+    first_ts = int(datetime(first.year, first.month, first.day, tzinfo=tz).timestamp())
+    start, reset = hp_weekly.week_bounds(first_ts, tz)
+    out = []
+    while start < now:
+        w = hp_weekly.compute(min(reset - 1, now), tz, data.get("sleep") or [], data.get("daily_activity") or [],
+                              stress_rows, steps, None)
+        items = " ".join("%s=%.1f" % (k, w["items"][k]) for k in hp_weekly.ITEMS if w["items"][k])
+        out.append("周 %s 起%s%s: 负债 %.1fh 剩余 %d%% top=%s %s" % (
+            datetime.fromtimestamp(start, tz).strftime("%m-%d"),
+            "（数据不全）" if start < first_ts else "", "（进行中）" if reset > now else "",
+            w["debt_hours"], w["remaining_percent"], w["top"] or "-", items))
+        start, reset = reset, reset + (reset - start)
+    return out
 
 
 def explain(result, tz):
@@ -286,6 +376,9 @@ def main(argv=None):
         except (RuntimeError, OSError) as exc:
             sys.exit(str(exc))
         print(explain(res, local_tz()))
+        if res.weekly:
+            print("—— 本周（周六 12:00 起）——")
+            print(hp_weekly.ledger_text(res.weekly))
         item = build_item(res, now)
     else:
         item = cycle(args, now, p)
