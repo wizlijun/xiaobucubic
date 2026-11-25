@@ -1,3 +1,10 @@
 .DS_Store
 __pycache__/
 server/banwagong.env
+
+# HP (Oura) local credentials and cache
+server/oura.env
+server/oura_token.json
+server/oura_token.json.lock
+server/hp_cache.json
+server/.oura-token-*
