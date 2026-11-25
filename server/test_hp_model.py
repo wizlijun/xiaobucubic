@@ -333,10 +333,6 @@ class ReplayTests(unittest.TestCase):
         self.assertIsNone(data_horizon([], []))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class NightTests(unittest.TestCase):
     T0 = parse_ts("2026-11-25T07:00:00+08:00")
 
@@ -371,19 +367,29 @@ class NightTests(unittest.TestCase):
         r = self.ns([self.hr("25 23:10", "sleep")], "25 23:30")
         self.assertEqual((r.state, r.t_bed, r.t_wake), ("day", None, None))
         r = self.ns([self.hr("25 23:10", "sleep"), self.hr("25 23:45", "sleep")], "25 23:50")
-        self.assertEqual(r.state, "day")
+        self.assertEqual((r.state, r.t_bed, r.t_wake), ("day", None, None))
 
     def test_rule2_fallback(self):
         r = self.ns([self.hr("25 23:40", "awake")], "26 00:30")
         self.assertEqual((r.state, r.t_bed, r.t_wake), ("night", self.at("25 23:45"), None))
 
     def test_rule2_not_yet(self):
-        r = self.ns([self.hr("25 23:40", "awake")], "25 23:50")
-        self.assertEqual((r.state, r.t_bed), ("day", None))
+        # 30-min quiet gap holds, but habitual bedtime + 30 min (00:00) not reached
+        r = self.ns([self.hr("25 21:00", "awake")], "25 23:40")
+        self.assertEqual((r.state, r.t_bed, r.t_wake), ("day", None, None))
+        # habitual + 30 min reached, but last awake row is not older than now - 30 min
+        r = self.ns([self.hr("25 23:40", "awake")], "26 00:05")
+        self.assertEqual((r.state, r.t_bed, r.t_wake), ("day", None, None))
+
+    def test_rule2_habitual_bed_at_floor(self):
+        # bed_min == 1080 (18:00): habitual instant is the floor itself, not the next day
+        prof = Profile(28, 50, 2, 62, 4, 0.2, 1080, 450, 8, 480, 70, 190, 0.64, 1.92)
+        r = night_state(self.T0, self.at("25 19:00"), [self.hr("25 18:05", "awake")], prof, TZ)
+        self.assertEqual((r.state, r.t_bed, r.t_wake), ("night", self.at("25 18:10"), None))
 
     def test_sleep_rows_before_1800_ignored(self):
         r = self.ns(self.run_rows("25 14:00", "25 14:30", "sleep"), "25 15:00")
-        self.assertEqual((r.state, r.t_bed), ("day", None))
+        self.assertEqual((r.state, r.t_bed, r.t_wake), ("day", None, None))
 
     def test_bathroom_trip(self):
         rows = (self.run_rows("25 23:10", "26 02:55", "sleep") + [self.hr("26 03:00", "awake")]
@@ -404,7 +410,8 @@ class NightTests(unittest.TestCase):
 
     def test_woke_timeout(self):
         r = self.ns(self.wake_rows(), "26 08:59")
-        self.assertEqual((r.state, r.t_wake), ("woke", self.at("26 07:00")))
+        self.assertEqual((r.state, r.t_bed, r.t_wake),
+                         ("woke", self.at("25 23:10"), self.at("26 07:00")))
         r = self.ns(self.wake_rows(), "26 09:00")
         self.assertEqual((r.state, r.t_bed, r.t_wake),
                          ("woke_timeout", self.at("25 23:10"), self.at("26 07:00")))
@@ -416,3 +423,7 @@ class NightTests(unittest.TestCase):
     def test_sleep_estimate(self):
         self.assertAlmostEqual(sleep_estimate(19, 4, 88, 8, P), 68.8, places=1)
         self.assertEqual(sleep_estimate(19, 9, 88, 8, P), 88)
+
+
+if __name__ == "__main__":
+    unittest.main()

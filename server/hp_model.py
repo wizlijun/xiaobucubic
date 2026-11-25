@@ -409,7 +409,7 @@ def night_state(t0, now, heartrate, profile, tz):
     if t_bed is None:
         midnight = datetime(day.year, day.month, day.day, tzinfo=tz)
         habitual = midnight + timedelta(minutes=profile.bed_min)
-        while habitual.timestamp() <= floor:
+        while habitual.timestamp() < floor:
             habitual += timedelta(days=1)
         if (awakes and now >= habitual.timestamp() + NIGHT_GAP
                 and awakes[-1] < now - NIGHT_GAP):
