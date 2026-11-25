@@ -275,6 +275,8 @@ class ReportTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             cwd = os.getcwd()
             os.chdir(tmp)
+            server_dir = os.path.dirname(hp_usage.__file__)
+            before = sorted(os.listdir(server_dir))
             try:
                 with patch.object(hp_usage, "CACHE_FILE", tmp + "/hp_cache.json"), \
                      patch.object(hp_usage, "local_tz", return_value=self.TZ), \
@@ -287,6 +289,7 @@ class ReportTests(unittest.TestCase):
             finally:
                 os.chdir(cwd)
             self.assertEqual(os.listdir(tmp), [])
+            self.assertEqual(sorted(os.listdir(server_dir)), before)
         return out
 
     def test_report_lines(self):

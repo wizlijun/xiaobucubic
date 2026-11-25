@@ -697,12 +697,50 @@ class DaySummaryTests(unittest.TestCase):
     def test_day_summary_no_main_sleep(self):
         self.assertIsNone(day_summary("2026-12-01", example_day_data(), 62, P, TZ))
 
-    def test_day_summary_sleep_fallback_and_default_window(self):
+    @staticmethod
+    def with_next_sleep(start):
+        data = example_day_data()
+        data["sleep"] = data["sleep"] + [sleep("2026-11-26", start, "2026-11-26T07:00:00+08:00", 8 * 3600)]
+        return data
+
+    def test_day_summary_sleep_fallback(self):
         data = example_day_data()
         data["daily_readiness"] = []
         s = day_summary("2026-11-25", data, 62, P, TZ)
         self.assertEqual(s["anchor_source"], "sleep")
-        self.assertGreater(s["stress_min"], 0)
+        self.assertEqual(s["stress_min"], 630)
+
+    def test_day_summary_window_end_default_0400(self):
+        # No next main sleep: replay runs to 04:00 next day; the unobserved tail drains hp.
+        s = day_summary("2026-11-25", example_day_data(), 62, P, TZ)
+        self.assertAlmostEqual(s["bed_hp"], 4.777, places=2)
+        self.assertAlmostEqual(s["mean_load"], 2.3807, places=3)
+        self.assertEqual((s["stress_min"], s["recovery_min"]), (630, 30))
+
+    def test_day_summary_window_end_follows_next_sleep(self):
+        s21 = day_summary("2026-11-25", self.with_next_sleep("2026-11-25T21:00:00+08:00"), 62, P, TZ)
+        s23 = day_summary("2026-11-25", self.with_next_sleep("2026-11-25T23:00:00+08:00"), 62, P, TZ)
+        self.assertAlmostEqual(s21["bed_hp"], 22.711, places=2)
+        self.assertAlmostEqual(s23["bed_hp"], 18.711, places=2)
+        self.assertAlmostEqual(s21["mean_load"], 2.7350, places=3)
+
+    def test_day_summary_pct_zero(self):
+        data = example_day_data()
+        data["daily_readiness"] = [{"day": "2026-11-25", "score": 30}] + data["daily_readiness"][1:]
+        s = day_summary("2026-11-25", data, 62, P, TZ)
+        self.assertEqual(s["anchor"], 20)
+        self.assertEqual(s["bed_hp"], 0)
+        self.assertAlmostEqual(s["pct_zero"], 183 / 252, places=4)  # 21h window = 252 cells
+        self.assertEqual(s["pct_full"], 0)
+
+    def test_day_summary_mean_load_excludes_nap_cells(self):
+        data = self.with_next_sleep("2026-11-25T23:00:00+08:00")
+        data["sleep"].append(sleep("2026-11-25", "2026-11-25T13:00:00+08:00",
+                                   "2026-11-25T13:30:00+08:00", 1500, type="sleep"))
+        s = day_summary("2026-11-25", data, 62, P, TZ)
+        self.assertAlmostEqual(s["mean_load"], 2.4703, places=3)
+        self.assertEqual(s["recovery_min"], 0)  # the rest cells fall inside the nap
+        self.assertAlmostEqual(s["bed_hp"], 20.665, places=2)
 
     def test_stress_unit(self):
         self.assertFalse(stress_in_minutes([2700, 3600, 1800]))
