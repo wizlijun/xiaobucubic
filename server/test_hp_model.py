@@ -3,7 +3,8 @@ from datetime import date, datetime, timedelta, timezone
 
 from hp_model import (DEFAULT_PARAMS, Cell, Profile, anchor_value, build_cells,
                       build_profile, data_horizon, main_sleeps, make_params,
-                      nap_periods, parse_ts, quiet_hr, replay)
+                      nap_periods, night_state, parse_ts, quiet_hr, replay,
+                      sleep_estimate)
 
 TZ = timezone(timedelta(hours=8))
 P = make_params()
@@ -334,3 +335,84 @@ class ReplayTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NightTests(unittest.TestCase):
+    T0 = parse_ts("2026-11-25T07:00:00+08:00")
+
+    @staticmethod
+    def hr(ts, source, bpm=60):
+        return {"timestamp": f"2026-11-{ts[:2]}T{ts[3:]}:00+08:00", "bpm": bpm, "source": source}
+
+    @staticmethod
+    def at(ts):
+        return parse_ts(f"2026-11-{ts[:2]}T{ts[3:]}:00+08:00")
+
+    @staticmethod
+    def run_rows(start, end, source, day="25"):
+        """rows every 5 minutes from 'day HH:MM' start to end (inclusive), end may be next day."""
+        a = datetime.fromisoformat(f"2026-11-{start[:2]}T{start[3:]}:00+08:00")
+        b = datetime.fromisoformat(f"2026-11-{end[:2]}T{end[3:]}:00+08:00")
+        out = []
+        while a <= b:
+            out.append({"timestamp": a.isoformat(), "bpm": 55, "source": source})
+            a += timedelta(minutes=5)
+        return out
+
+    def ns(self, rows, now):
+        prof = Profile(28, 50, 2, 62, 4, 0.2, 1410, 450, 8, 480, 70, 190, 0.64, 1.92)
+        return night_state(self.T0, self.at(now), rows, prof, TZ)
+
+    def test_rule1_sleep_rows(self):
+        r = self.ns([self.hr("25 23:10", "sleep"), self.hr("25 23:15", "sleep")], "25 23:30")
+        self.assertEqual((r.state, r.t_bed, r.t_wake), ("night", self.at("25 23:10"), None))
+
+    def test_rule1_needs_two_rows_within_30(self):
+        r = self.ns([self.hr("25 23:10", "sleep")], "25 23:30")
+        self.assertEqual((r.state, r.t_bed, r.t_wake), ("day", None, None))
+        r = self.ns([self.hr("25 23:10", "sleep"), self.hr("25 23:45", "sleep")], "25 23:50")
+        self.assertEqual(r.state, "day")
+
+    def test_rule2_fallback(self):
+        r = self.ns([self.hr("25 23:40", "awake")], "26 00:30")
+        self.assertEqual((r.state, r.t_bed, r.t_wake), ("night", self.at("25 23:45"), None))
+
+    def test_rule2_not_yet(self):
+        r = self.ns([self.hr("25 23:40", "awake")], "25 23:50")
+        self.assertEqual((r.state, r.t_bed), ("day", None))
+
+    def test_sleep_rows_before_1800_ignored(self):
+        r = self.ns(self.run_rows("25 14:00", "25 14:30", "sleep"), "25 15:00")
+        self.assertEqual((r.state, r.t_bed), ("day", None))
+
+    def test_bathroom_trip(self):
+        rows = (self.run_rows("25 23:10", "26 02:55", "sleep") + [self.hr("26 03:00", "awake")]
+                + self.run_rows("26 03:20", "26 03:55", "sleep"))
+        r = self.ns(rows, "26 04:00")
+        self.assertEqual((r.state, r.t_bed, r.t_wake), ("night", self.at("25 23:10"), None))
+
+    def wake_rows(self):
+        return (self.run_rows("25 23:10", "26 06:55", "sleep")
+                + [self.hr("26 07:00", "awake"), self.hr("26 07:10", "awake")])
+
+    def test_wake_needs_30_min(self):
+        r = self.ns(self.wake_rows(), "26 07:20")
+        self.assertEqual((r.state, r.t_bed, r.t_wake), ("night", self.at("25 23:10"), None))
+        r = self.ns(self.wake_rows(), "26 07:40")
+        self.assertEqual((r.state, r.t_bed, r.t_wake),
+                         ("woke", self.at("25 23:10"), self.at("26 07:00")))
+
+    def test_woke_timeout(self):
+        r = self.ns(self.wake_rows(), "26 08:59")
+        self.assertEqual((r.state, r.t_wake), ("woke", self.at("26 07:00")))
+        r = self.ns(self.wake_rows(), "26 09:00")
+        self.assertEqual((r.state, r.t_bed, r.t_wake),
+                         ("woke_timeout", self.at("25 23:10"), self.at("26 07:00")))
+
+    def test_oversleep_stays_night(self):
+        r = self.ns(self.run_rows("25 23:10", "26 10:00", "sleep"), "26 10:05")
+        self.assertEqual((r.state, r.t_bed, r.t_wake), ("night", self.at("25 23:10"), None))
+
+    def test_sleep_estimate(self):
+        self.assertAlmostEqual(sleep_estimate(19, 4, 88, 8, P), 68.8, places=1)
+        self.assertEqual(sleep_estimate(19, 9, 88, 8, P), 88)

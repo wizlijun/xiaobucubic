@@ -361,3 +361,70 @@ def replay(hp0, cells, profile, p, horizon, anchor=None):
         step_hr = c.hr if c.hr is not None else c.still_hr
         steps.append(Step(c.start, kind, rate, hp, step_hr, c.met, load))
     return steps
+
+
+AWAKE_SOURCES = ("awake", "workout", "live", "rest", "session")
+NIGHT_GAP = 1800
+WOKE_HOLD = 7200
+
+
+@dataclass
+class NightState:
+    state: str
+    t_bed: int | None = None
+    t_wake: int | None = None
+
+
+def sleep_estimate(hp_bed, hours, a_bar, habitual_h, p):
+    f = ((1 - math.exp(-hours / p["tau_sleep"]))
+         / (1 - math.exp(-habitual_h / p["tau_sleep"])))
+    return hp_bed + max(0.0, a_bar - hp_bed) * min(1.0, f)
+
+
+def night_state(t0, now, heartrate, profile, tz):
+    day = local_date(t0, tz)
+    floor = int(datetime(day.year, day.month, day.day, 18, tzinfo=tz).timestamp())
+    lo = max(t0, floor)
+    sleeps, awakes = [], []
+    for row in heartrate:
+        if row.get("bpm") is None:
+            continue
+        t = _hr_time(row)
+        if t <= lo or t > now:
+            continue
+        if row.get("source") == "sleep":
+            sleeps.append(t)
+        elif row.get("source") in AWAKE_SOURCES:
+            awakes.append(t)
+    sleeps.sort()
+    awakes.sort()
+
+    t_bed = None
+    seg_start = None
+    for i, t in enumerate(sleeps):
+        if i and t - sleeps[i - 1] <= NIGHT_GAP:
+            t_bed = seg_start
+            break
+        seg_start = t
+    if t_bed is None:
+        midnight = datetime(day.year, day.month, day.day, tzinfo=tz)
+        habitual = midnight + timedelta(minutes=profile.bed_min)
+        while habitual.timestamp() <= floor:
+            habitual += timedelta(days=1)
+        if (awakes and now >= habitual.timestamp() + NIGHT_GAP
+                and awakes[-1] < now - NIGHT_GAP):
+            t_bed = awakes[-1] + CELL
+    if t_bed is None:
+        return NightState("day")
+
+    t_wake = None
+    for a in awakes:
+        if a <= t_bed or now < a + NIGHT_GAP:
+            continue
+        if not any(a < s <= a + NIGHT_GAP for s in sleeps):
+            t_wake = a
+            break
+    if t_wake is None:
+        return NightState("night", t_bed)
+    state = "woke" if now - t_wake < WOKE_HOLD else "woke_timeout"
+    return NightState(state, t_bed, t_wake)
