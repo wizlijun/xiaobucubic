@@ -18,7 +18,7 @@ Content-Type: application/json
 {}
 ```
 
-支持 `claude`、`codex`、`grok`、`gemini`、`bandwagon`、`weather`（另保留 `banwagong` 兼容采集器）。此 POST 会在允许查询时原子分配 90 秒采集租约，避免多个采集器同时请求同一个数据源。
+支持 `claude`、`codex`、`grok`、`gemini`、`bandwagon`、`weather`、`energy`。此 POST 会在允许查询时原子分配 90 秒采集租约，避免多个采集器同时请求同一个数据源。
 
 ```json
 {

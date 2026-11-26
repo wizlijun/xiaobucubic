@@ -68,7 +68,7 @@ MAX_WINDOWS = 2
 MIN_TTL = 60
 BOT_DEFAULT_TTL = 24 * 3600
 BOT_MAX_TTL = 7 * 24 * 3600
-DEFAULT_ORDER = ("energy", "claude", "codex", "grok", "gemini", "banwagong")
+DEFAULT_ORDER = ("energy", "claude", "codex", "grok", "gemini", "bandwagon")
 SOURCES = ("official", "manual", "estimated", "unknown")
 ENERGY_TRENDS = ("charging", "draining", "steady")
 ENERGY_TREND_LABELS = {"charging": "回血中", "draining": "消耗中", "steady": "平稳"}
@@ -83,7 +83,6 @@ COLLECTORS = {
     "grok": "grok_usage.py",
     "gemini": "gemini_usage.py",
     "bandwagon": "bandwagon_usage.py",
-    "banwagong": "banwagong_usage.py",
     "weather": "weather_shenzhen.py",
     "energy": "hp_usage.py",
 }
