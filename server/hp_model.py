@@ -194,6 +194,7 @@ def anchor_value(day, main, readiness_by_day, profile, p):
 
 
 STILL_SOURCES = ("awake", "rest", "live", "session")
+WORN_CLASSES = ("1", "2", "3", "4", "5")
 INTENSITY_MET = {"easy": 3.0, "moderate": 5.0, "hard": 8.0}
 CELL = 300
 CARRY_CELLS = 6
@@ -323,11 +324,48 @@ def build_cells(t0, t_end, heartrate, activities, workouts, naps, tz):
 def data_horizon(heartrate, activities):
     times = [_hr_time(r) for r in heartrate if r.get("bpm") is not None]
     for act in activities:
+        if not isinstance(act, dict):
+            continue
+        cls = act.get("class_5_min")
+        ts = _safe_ts(act.get("timestamp"))
+        if isinstance(cls, str) and cls and ts is not None:
+            times.append(ts + (len(cls) - 1) * CELL)
+            continue
         met = act.get("met") or {}
-        if met.get("items") and met.get("timestamp"):
+        if met.get("items") and _safe_ts(met.get("timestamp")) is not None:
             base, step = parse_ts(met["timestamp"]), met.get("interval") or 60
             times += [base + k * step for k, v in enumerate(met["items"]) if v is not None]
     return max(times) if times else None
+
+
+def last_synced(t0, now, heartrate, activities, workouts=(), naps=()):
+    """日间最近一次佩戴且已同步的数据时刻（心率、佩戴状态的 5 分钟活动、运动或小睡）。"""
+    last = t0
+    for row in heartrate:
+        if row.get("bpm") is not None and row.get("source") in AWAKE_SOURCES:
+            t = _hr_time(row)
+            if t0 <= t <= now and t > last:
+                last = t
+    for act in activities:
+        if not isinstance(act, dict):
+            continue
+        cls = act.get("class_5_min")
+        base = _safe_ts(act.get("timestamp"))
+        if isinstance(cls, str) and cls and base is not None:
+            for k, ch in enumerate(cls):
+                if ch in WORN_CLASSES:
+                    s = base + k * CELL
+                    if t0 <= s <= now and s > last:
+                        last = s
+    for w in workouts:
+        if isinstance(w, dict):
+            we = _safe_ts(w.get("end_datetime"))
+            if we is not None and t0 <= we <= now and we > last:
+                last = we
+    for _start, end, _total in naps:
+        if t0 <= end <= now and end > last:
+            last = end
+    return last
 
 
 def _trimp_load(hr, profile, p):
@@ -638,18 +676,16 @@ def compute(now, data, hr_quiet, p, tz, age=None):
     if ns.state == "day":
         cells = build_cells(t0, now, heartrate, activities, workouts, naps, tz)
         steps = replay(hp0, cells, profile, p, horizon)
-        awake = [_hr_time(row) for row in heartrate
-                 if row.get("bpm") is not None and row.get("source") in AWAKE_SOURCES and _hr_time(row) >= t0]
-        last_awake = max(awake) if awake else t0
+        synced = last_synced(t0, now, heartrate, activities, workouts, naps)
         wake_instant = (datetime(today.year, today.month, today.day, tzinfo=tz)
                         + timedelta(minutes=profile.wake_min)).timestamp()
-        if (now - last_awake >= UNSYNCED_MAX_H * 3600
+        if (now - synced >= UNSYNCED_MAX_H * 3600
                 or (now >= wake_instant + DAY_FALLBACK_AFTER_WAKE and now - t0 > DAY_FALLBACK_AGE)):
             return _null("day", steps, anchor_day, r, profile)
         hp = steps[-1].hp if steps else hp0
         level = round_level(hp)
         trend = trend_of([s.rate for s in steps], p)
-        note = _day_note(steps, level, now, t0, r, last_awake, profile)
+        note = _day_note(steps, level, now, t0, r, synced, profile)
         stress = next((row.get("stress_high") for row in data.get("daily_stress") or []
                        if isinstance(row, dict) and row.get("day") == today.isoformat()), None)
         line = day_line(steps, level, note, now, profile, p, tz,

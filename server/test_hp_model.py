@@ -336,6 +336,10 @@ class ReplayTests(unittest.TestCase):
         act = {"met": {"interval": 60, "timestamp": "2026-11-25T07:00:00+08:00",
                        "items": [1.0, None, 1.0, None]}}
         self.assertEqual(data_horizon(hr, [act]), T0 + 120)
+        padded = {"timestamp": "2026-11-25T07:00:00+08:00", "class_5_min": "12",
+                  "met": {"interval": 60, "timestamp": "2026-11-25T07:00:00+08:00",
+                          "items": [0.9] * 1440}}
+        self.assertEqual(data_horizon([], [padded]), T0 + 300)
         self.assertIsNone(data_horizon([], []))
 
 
@@ -540,6 +544,7 @@ class ComputeTests(unittest.TestCase):
     def test_note_priority_unsynced_over_exercise(self):
         now = "2026-11-25T19:00:00+08:00"
         d = self.cut_hr(example_day_data(until=now), "2026-11-25T15:30:00+08:00")
+        d["daily_activity"][0]["class_5_min"] = None
         met = d["daily_activity"][0]["met"]
         base = parse_ts(met["timestamp"])
         met["items"] = [8.0 if base + 60 * k >= parse_ts("2026-11-25T18:30:00+08:00") else v
@@ -562,18 +567,40 @@ class ComputeTests(unittest.TestCase):
         self.assertEqual(r.note, "准备度82")
 
     def test_note_unsynced_hours(self):
-        d = self.cut_hr(example_day_data(until="2026-11-25T15:30:00+08:00"), "2026-11-25T12:00:00+08:00")
+        d = example_day_data(until="2026-11-25T12:00:00+08:00")
         r = self.run_at("2026-11-25T15:30:00+08:00", d)
         self.assertEqual(r.note, "3h未同步")
         self.assertIsNotNone(r.level)
 
     def test_null_after_8h_no_awake_hr(self):
-        d = self.cut_hr(example_day_data(until="2026-11-25T15:30:00+08:00"), "2026-11-25T07:30:00+08:00")
+        d = example_day_data(until="2026-11-25T07:30:00+08:00")
         r = self.run_at("2026-11-25T15:30:00+08:00", d)
         self.assertEqual((r.level, r.status, r.trend, r.note), (None, "待同步", None, None))
 
-    def test_sleep_rows_do_not_count_as_awake(self):
+    def test_worn_activity_prevents_false_unsynced_and_null(self):
+        # 持续打字/走动时 Oura 日间 PPG 心率可能连续数小时无读数，但戒指佩戴且已同步 class_5_min ('1'..'5')
+        d = self.cut_hr(example_day_data(until="2026-11-25T11:30:00+08:00"), "2026-11-25T07:30:00+08:00")
+        r = self.run_at("2026-11-25T11:30:00+08:00", d)
+        self.assertIsNone(r.note)
+        self.assertFalse((r.line or "").endswith("h未同步"))
+        d8 = self.cut_hr(example_day_data(until="2026-11-25T15:30:00+08:00"), "2026-11-25T07:30:00+08:00")
+        r8 = self.run_at("2026-11-25T15:30:00+08:00", d8)
+        self.assertIsNotNone(r8.level)
+        self.assertIsNone(r8.note)
+
+    def test_offwrist_activity_does_not_count_as_synced(self):
+        # 摘下戒指充电/放置时 class_5_min 为 '0'，不能当成佩戴同步
         d = self.cut_hr(example_day_data(until="2026-11-25T15:30:00+08:00"), "2026-11-25T07:30:00+08:00")
+        cls = d["daily_activity"][0]["class_5_min"]
+        # 04:00 起第 43 格为 07:35，此后全部标为未佩戴 '0'
+        d["daily_activity"][0]["class_5_min"] = cls[:43] + "0" * (len(cls) - 43)
+        r4 = self.run_at("2026-11-25T11:30:00+08:00", d)
+        self.assertEqual(r4.note, "4h未同步")
+        r8 = self.run_at("2026-11-25T15:30:00+08:00", d)
+        self.assertEqual((r8.level, r8.status), (None, "待同步"))
+
+    def test_sleep_rows_do_not_count_as_awake(self):
+        d = example_day_data(until="2026-11-25T07:30:00+08:00")
         d["heartrate"] += hr_run("2026-11-25T10:00:00+08:00", "2026-11-25T15:00:00+08:00", "sleep")
         # sleep rows before 18:00 are ignored by night_state and are not awake rows
         self.assertIsNone(self.run_at("2026-11-25T15:30:00+08:00", d).level)
