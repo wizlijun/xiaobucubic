@@ -4,7 +4,7 @@
 天气以预报为准: condition / rain_percent 取未来 12 小时逐小时预报中最显著的天气
 和最高降水概率，low_c / high_c 取今日预报；temperature_c、湿度、气压等为当前值。
 扩展字段 condition_now 为当前天气，forecast_hours 为预报时长，pressure_hpa 为海平面气压。
-updated_at 取接口数据对应的时间（每 15 分钟一档），不是查询时间。
+updated_at 取实际采集成功的时间（Open-Meteo 观测时间按 15 分钟分档，直接用作 updated_at 会在正常采集间隙触发客户端 900 秒过期提示）。
 
 用法:
     ./weather_shenzhen.py          # 人类可读输出
@@ -14,6 +14,7 @@ updated_at 取接口数据对应的时间（每 15 分钟一档），不是查�
 import argparse
 import json
 import sys
+import time
 import urllib.error
 import urllib.request
 from urllib.parse import urlencode
@@ -101,7 +102,7 @@ def to_display(data):
         "wind_kmh": current.get("wind_speed_10m"),
         "pressure_hpa": current.get("pressure_msl"),
         "source": "Open-Meteo",
-        "updated_at": int(current["time"]),
+        "updated_at": int(time.time()),
     }
 
 

@@ -12,6 +12,7 @@ from unittest.mock import Mock, patch
 
 import display_push
 import display_server
+import weather_shenzhen
 
 
 class Clock:
@@ -243,6 +244,31 @@ class ProtocolTests(unittest.TestCase):
             with self.assertRaises(EndLoop):
                 display_push.run(args, lambda: self.item)
         sleep.assert_called_once_with(47)
+
+    def test_supervise_collector_stops_on_clean_zero_exit(self):
+        proc = Mock()
+        proc.poll.return_value = 0
+        proc.returncode = 0
+        stop = threading.Event()
+        with patch.object(display_server.subprocess, 'Popen', return_value=proc) as popen, \
+                patch.object(stop, 'wait', return_value=False), \
+                patch.object(display_server, 'log'):
+            display_server.supervise_collector('bandwagon', 'http://127.0.0.1:8007', stop)
+        popen.assert_called_once()
+
+    def test_handler_route_tolerates_missing_path(self):
+        handler = display_server.Handler.__new__(display_server.Handler)
+        self.assertIsNone(handler._route())
+
+    def test_weather_updated_at_uses_fetch_time_not_15min_slot(self):
+        sample = {
+            'current': {'time': 1795698000, 'temperature_2m': 17.0, 'weather_code': 0},
+            'hourly': {'weather_code': [2], 'precipitation_probability': [10]},
+            'daily': {'temperature_2m_min': [14.0], 'temperature_2m_max': [20.0]},
+        }
+        with patch.object(weather_shenzhen.time, 'time', return_value=1795698890.4):
+            result = weather_shenzhen.to_display(sample)
+        self.assertEqual(result['updated_at'], 1795698890)
 
 
 if __name__ == '__main__':

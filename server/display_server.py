@@ -531,6 +531,9 @@ def supervise_collector(name, push_url, stop):
             )
             while not stop.wait(1):
                 if proc.poll() is not None:
+                    if proc.returncode == 0:
+                        log("采集器 %s 正常退出 (0)，停止托管" % name)
+                        return
                     log("采集器 %s 退出 (%s)，15 秒后重启" % (name, proc.returncode))
                     break
         except OSError:
@@ -606,7 +609,8 @@ class Handler(BaseHTTPRequestHandler):
         return bool(expected) and hmac.compare_digest(self._token().encode(), expected.encode())
 
     def _route(self):
-        parts = [unquote(p) for p in urlsplit(self.path).path.split("/") if p]
+        path = getattr(self, "path", "") or ""
+        parts = [unquote(p) for p in urlsplit(path).path.split("/") if p]
         return parts[1:] if parts[:1] == ["v1"] else None
 
     def do_GET(self):
